@@ -135,26 +135,46 @@ export class RecognitionService {
     ): { text: string; confidence: number } {
         const dict = this.options.charactersDictionary!;
         let text = "";
-        const scores = [];
+        const scores: number[] = [];
+
+        let lastIndex = -1;
+
         for (let t = 0; t < sequenceLength; t++) {
             let maxScore = 0;
             let maxScoreIndex = 0;
-            for (let [index, score] of logits.slice(t * numClasses, (t + 1) * numClasses).entries()) {
-                if (score > maxScore) {
-                    if (!charWhiteSet || charWhiteSet.has(dict[index]) || index === 0) {
-                        maxScore = score;
-                        maxScoreIndex = index;
-                    }
+
+            const offset = t * numClasses;
+            for (let i = 0; i < numClasses; i++) {
+                const val = logits[offset + i];
+                if (val > maxScore) {
+                    maxScore = val;
+                    maxScoreIndex = i;
                 }
             }
-            if (maxScoreIndex === 0) continue;
+
+            if (maxScoreIndex === lastIndex) {
+                continue;
+            }
+
+            lastIndex = maxScoreIndex;
+
+            if (maxScoreIndex === 0) {
+                continue;
+            }
+
             const char = dict[maxScoreIndex] || "";
+
+            if (charWhiteSet && !charWhiteSet.has(char) && char !== " ") {
+                continue;
+            }
+
             text += char;
             scores.push(maxScore);
         }
+
         return {
             text,
-            confidence: scores.reduce((sum, score) => sum + score, 0) / scores.length,
+            confidence: scores.length > 0 ? scores.reduce((sum, score) => sum + score, 0) / scores.length : 0,
         };
     }
 }
