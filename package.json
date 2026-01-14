@@ -1,6 +1,6 @@
 {
     "name": "paddleocr",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "description": "A cross-platform OCR library based on PaddleOCR v5 and ONNX Runtime that is as small as possible.",
     "keywords": [
         "ocr"
