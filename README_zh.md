@@ -81,6 +81,29 @@ const result = await paddleOcrService.recognize(input);
 console.log(result);
 ```
 
+### 6. 获取实时进度
+
+可以在 `recognize` 的第二个参数里传入 `onProgress`，实时接收检测和识别阶段的事件。
+
+```js
+const result = await paddleOcrService.recognize(input, {
+    onProgress(event) {
+        console.log(event.type, event.stage, event.progress);
+
+        if (event.type === "rec" && event.stage === "item") {
+            console.log("部分结果:", event.result?.text, event.box);
+        }
+    },
+});
+```
+
+事件约定：
+
+- `det` 会依次发出 `preprocess`、`infer`、`postprocess`，对应固定进度 `1/3`、`2/3`、`3/3`
+- `rec` 会先发 `start`，然后每个文本框完成时发一次 `item`，最后发 `complete`
+- `rec/item` 会带上当前 `result` 和 `box`
+- `det/postprocess` 会额外带上 `detectedCount`
+
 ## 模型文件
 
 示例模型见github仓库的 `assets/` 目录：

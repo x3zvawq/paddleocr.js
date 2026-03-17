@@ -81,6 +81,29 @@ const result = await paddleOcrService.recognize(input);
 console.log(result);
 ```
 
+### 6. Track Progress
+
+You can pass `onProgress` to `recognize` to receive detection and recognition updates in real time.
+
+```js
+const result = await paddleOcrService.recognize(input, {
+    onProgress(event) {
+        console.log(event.type, event.stage, event.progress);
+
+        if (event.type === "rec" && event.stage === "item") {
+            console.log("Partial result:", event.result?.text, event.box);
+        }
+    },
+});
+```
+
+Event contract:
+
+- `det` emits `preprocess`, `infer`, and `postprocess` with fixed progress `1/3`, `2/3`, `3/3`
+- `rec` emits `start`, one `item` per detected text box, then `complete`
+- `rec/item` includes the current `result` and `box`
+- `det/postprocess` includes `detectedCount`
+
 ## Model Files
 
 You can find sample models in the `assets/` directory:
