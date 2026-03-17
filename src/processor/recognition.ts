@@ -1,7 +1,14 @@
-import type * as ort from "onnxruntime-node";
-import type { Box, RecognitionOptions, RecognitionServiceOptions } from "../interface";
-import { DEFAULT_RECOGNITION_OPTIONS } from "../constants";
-import { Image } from "../utils/image";
+import { DEFAULT_RECOGNITION_OPTIONS } from "../constants.ts";
+import type {
+    Box,
+    OcrProgress,
+    OrtInferenceSession,
+    OrtModule,
+    OrtTensor,
+    RecognitionOptions,
+    RecognitionServiceOptions,
+} from "../interface.ts";
+import type { Image } from "../utils/image.ts";
 
 export interface RecognitionResult {
     text: string;
@@ -21,13 +28,13 @@ export interface SingleRecognitionTask {
  */
 export class RecognitionService {
     private readonly options: RecognitionServiceOptions;
-    private readonly session: ort.InferenceSession;
-    private readonly ortModule: typeof ort;
+    private readonly session: OrtInferenceSession;
+    private readonly ortModule: OrtModule;
 
     constructor(
-        ortModule: typeof ort,
-        session: ort.InferenceSession,
-        options: Partial<RecognitionServiceOptions> = {},
+        ortModule: OrtModule,
+        session: OrtInferenceSession,
+        options: Partial<RecognitionServiceOptions> = {}
     ) {
         this.session = session;
         this.ortModule = ortModule;
@@ -44,10 +51,26 @@ export class RecognitionService {
      * @param detection Array of bounding boxes from text detection
      * @returns Array of recognition results with text and bounding box, sorted in reading order
      */
-    async run(image: Image, detection: Box[], options?: RecognitionOptions): Promise<RecognitionResult[]> {
-        const validBoxes = detection.filter((box) => box.width > 0 && box.height > 0);
+    async run(
+        image: Image,
+        detection: Box[],
+        options?: RecognitionOptions
+    ): Promise<RecognitionResult[]> {
+        const validBoxes = this.sortBoxesByReadingOrder(
+            detection.filter((box) => box.width > 0 && box.height > 0)
+        );
         const results: RecognitionResult[] = [];
-        const charWhiteListSet = options?.charWhiteList?.length ? new Set(options.charWhiteList) : undefined;
+        const charWhiteListSet = options?.charWhiteList?.length
+            ? new Set(options.charWhiteList)
+            : undefined;
+        const total = validBoxes.length;
+        const onProgress = options?.onProgress;
+
+        onProgress?.({
+            type: "rec",
+            stage: "start",
+            progress: this.createProgress(0, total),
+        });
 
         for (const [i, box] of validBoxes.entries()) {
             const result = await this.processBox({
@@ -59,8 +82,23 @@ export class RecognitionService {
             if (result) {
                 results.push(result);
             }
+            onProgress?.({
+                type: "rec",
+                stage: "item",
+                progress: this.createProgress(i + 1, total),
+                index: i,
+                box,
+                result: result ?? undefined,
+            });
         }
-        return this.sortResultsByReadingOrder(results);
+
+        onProgress?.({
+            type: "rec",
+            stage: "complete",
+            progress: this.createProgress(total, total),
+        });
+
+        return results;
     }
 
     /**
@@ -71,14 +109,19 @@ export class RecognitionService {
 
         const crop = image.crop(box);
         const resizedCrop = crop.resize({
-            height: this.options.imageHeight!,
+            height: this.options.imageHeight ?? DEFAULT_RECOGNITION_OPTIONS.imageHeight,
         });
         const tensor = resizedCrop.tensor({
-            mean_values: this.options.mean!,
-            norm_values: this.options.stdDeviation!,
+            mean_values: this.options.mean ?? DEFAULT_RECOGNITION_OPTIONS.mean,
+            norm_values: this.options.stdDeviation ?? DEFAULT_RECOGNITION_OPTIONS.stdDeviation,
         });
 
-        const inputTensor = new this.ortModule.Tensor("float32", tensor, [1, 3, resizedCrop.height, resizedCrop.width]);
+        const inputTensor = new this.ortModule.Tensor("float32", tensor, [
+            1,
+            3,
+            resizedCrop.height,
+            resizedCrop.width,
+        ]);
         const { data: outputData, dims: shape } = await this.runInference(inputTensor);
 
         const [, sequenceLength, numClasses] = shape;
@@ -86,7 +129,7 @@ export class RecognitionService {
             outputData as Float32Array,
             sequenceLength,
             numClasses,
-            task.charWhiteSet,
+            task.charWhiteSet
         );
 
         return { text: recognizedText, box, confidence };
@@ -95,23 +138,27 @@ export class RecognitionService {
     /**
      * Sort recognition results by reading order (top to bottom, left to right)
      */
-    private sortResultsByReadingOrder(results: RecognitionResult[]): RecognitionResult[] {
-        return [...results].sort((a, b) => {
-            const boxA = a.box;
-            const boxB = b.box;
-
-            // If boxes are roughly on the same line (within 1/4 of their combined heights)
+    private sortBoxesByReadingOrder(boxes: Box[]): Box[] {
+        return [...boxes].sort((boxA, boxB) => {
             if (Math.abs(boxA.y - boxB.y) < (boxA.height + boxB.height) / 4) {
-                return boxA.x - boxB.x; // Sort left to right
+                return boxA.x - boxB.x;
             }
-            return boxA.y - boxB.y; // Otherwise sort top to bottom
+            return boxA.y - boxB.y;
         });
+    }
+
+    private createProgress(current: number, total: number): OcrProgress {
+        return {
+            current,
+            remain: total - current,
+            total,
+        };
     }
 
     /**
      * Runs the ONNX inference session with the prepared tensor
      */
-    private async runInference(inputTensor: ort.Tensor): Promise<ort.Tensor> {
+    private async runInference(inputTensor: OrtTensor): Promise<OrtTensor> {
         const feeds = { x: inputTensor };
         const results = await this.session.run(feeds);
 
@@ -120,7 +167,7 @@ export class RecognitionService {
 
         if (!outputTensor) {
             throw new Error(
-                `Recognition output tensor '${outputNodeName}' not found. Available keys: ${Object.keys(results)}`,
+                `Recognition output tensor '${outputNodeName}' not found. Available keys: ${Object.keys(results)}`
             );
         }
 
@@ -131,9 +178,10 @@ export class RecognitionService {
         logits: Float32Array,
         sequenceLength: number,
         numClasses: number,
-        charWhiteSet?: Set<string>,
+        charWhiteSet?: Set<string>
     ): { text: string; confidence: number } {
-        const dict = this.options.charactersDictionary!;
+        const dict =
+            this.options.charactersDictionary ?? DEFAULT_RECOGNITION_OPTIONS.charactersDictionary;
         let text = "";
         const scores: number[] = [];
 
@@ -174,7 +222,10 @@ export class RecognitionService {
 
         return {
             text,
-            confidence: scores.length > 0 ? scores.reduce((sum, score) => sum + score, 0) / scores.length : 0,
+            confidence:
+                scores.length > 0
+                    ? scores.reduce((sum, score) => sum + score, 0) / scores.length
+                    : 0,
         };
     }
 }

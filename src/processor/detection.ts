@@ -1,7 +1,13 @@
-import type * as ort from "onnxruntime-web";
-import { Image } from "../utils/image";
-import { DEFAULT_DETECTION_OPTIONS } from "../constants";
-import type { Box, DetectionServiceOptions } from "../interface";
+import { DEFAULT_DETECTION_OPTIONS } from "../constants.ts";
+import type {
+    Box,
+    DetectionServiceOptions,
+    OcrProgress,
+    OrtInferenceSession,
+    OrtModule,
+    PaddleOcrProgressEvent,
+} from "../interface.ts";
+import { Image } from "../utils/image.ts";
 
 export interface ResizeParams {
     srcWidth: number;
@@ -24,11 +30,16 @@ export interface PreprocessDetectionResult {
  * Service for detecting text regions in images
  */
 export class DetectionService {
+    private static readonly TOTAL_PROGRESS_STEPS = 3;
     private readonly options: DetectionServiceOptions;
-    private readonly session: ort.InferenceSession;
-    private readonly ortModule: typeof ort;
+    private readonly session: OrtInferenceSession;
+    private readonly ortModule: OrtModule;
 
-    constructor(ortModule: typeof ort, session: ort.InferenceSession, options: Partial<DetectionServiceOptions> = {}) {
+    constructor(
+        ortModule: OrtModule,
+        session: OrtInferenceSession,
+        options: Partial<DetectionServiceOptions> = {}
+    ) {
         this.session = session;
         this.ortModule = ortModule;
 
@@ -42,16 +53,38 @@ export class DetectionService {
      * Main method to run text detection on an image
      * @param image ArrayBuffer of the image or Canvas
      */
-    async run(image: Image): Promise<Box[]> {
+    async run(image: Image, onProgress?: (event: PaddleOcrProgressEvent) => void): Promise<Box[]> {
         const input = await this.preprocessDetection(image);
+        onProgress?.({
+            type: "det",
+            stage: "preprocess",
+            progress: this.createProgress(1),
+        });
 
         const detection = await this.runInference(input.tensor, input.resizeParams);
-        if (!detection) {
-            return [];
-        }
+        onProgress?.({
+            type: "det",
+            stage: "infer",
+            progress: this.createProgress(2),
+        });
 
-        const detectedBoxes = this.postprocessDetection(detection, input);
+        const detectedBoxes = detection ? this.postprocessDetection(detection, input) : [];
+        onProgress?.({
+            type: "det",
+            stage: "postprocess",
+            progress: this.createProgress(3),
+            detectedCount: detectedBoxes.length,
+        });
+
         return detectedBoxes;
+    }
+
+    private createProgress(current: number): OcrProgress {
+        return {
+            current,
+            remain: DetectionService.TOTAL_PROGRESS_STEPS - current,
+            total: DetectionService.TOTAL_PROGRESS_STEPS,
+        };
     }
 
     /**
@@ -65,8 +98,8 @@ export class DetectionService {
             height: resizeParams.dstHeight,
         });
         const tensor = resizedImage.tensor({
-            mean_values: this.options.mean!,
-            norm_values: this.options.stdDeviation!,
+            mean_values: this.options.mean ?? DEFAULT_DETECTION_OPTIONS.mean,
+            norm_values: this.options.stdDeviation ?? DEFAULT_DETECTION_OPTIONS.stdDeviation,
         });
 
         return {
@@ -79,7 +112,7 @@ export class DetectionService {
      * Calculate dimensions for resizing the image
      */
     private calculateResizeDimensions(image: Image) {
-        const MAX_SIDE_LEN = this.options.maxSideLength!;
+        const MAX_SIDE_LEN = this.options.maxSideLength ?? DEFAULT_DETECTION_OPTIONS.maxSideLength;
         const { width: srcWidth, height: srcHeight } = image;
         const ratio = srcWidth > srcHeight ? MAX_SIDE_LEN / srcWidth : MAX_SIDE_LEN / srcHeight;
         let dstWidth = Math.floor(srcWidth * ratio);
@@ -103,7 +136,10 @@ export class DetectionService {
     /**
      * Run the detection model inference
      */
-    private async runInference(tensor: Float32Array, resizeParams: ResizeParams): Promise<Float32Array | null> {
+    private async runInference(
+        tensor: Float32Array,
+        resizeParams: ResizeParams
+    ): Promise<Float32Array | null> {
         const inputTensor = new this.ortModule.Tensor("float32", tensor, [
             1,
             3,
@@ -126,16 +162,24 @@ export class DetectionService {
      */
     private postprocessDetection(detection: Float32Array, input: PreprocessDetectionResult): Box[] {
         const { dstWidth, dstHeight } = input.resizeParams;
-        const greyImage = new Image(dstWidth, dstHeight, 1, new Uint8Array(detection.map((v) => Math.round(v * 255))));
+        const greyImage = new Image(
+            dstWidth,
+            dstHeight,
+            1,
+            new Uint8Array(detection.map((v) => Math.round(v * 255)))
+        );
         const thresholdedImage = greyImage.threshold({
-            threshold: 255 * this.options.textPixelThreshold!,
+            threshold:
+                255 *
+                (this.options.textPixelThreshold ?? DEFAULT_DETECTION_OPTIONS.textPixelThreshold),
         });
         const dilateImage = thresholdedImage.dilate({
             norm: "LInf",
             k: 1,
         });
         const boxes = dilateImage.contours({
-            minArea: this.options.minimumAreaThreshold!,
+            minArea:
+                this.options.minimumAreaThreshold ?? DEFAULT_DETECTION_OPTIONS.minimumAreaThreshold,
         });
         const finalBoxes = boxes.map((box) => {
             const paddedBox = this.applyPaddingToRect(box, dstWidth, dstHeight);
@@ -153,7 +197,7 @@ export class DetectionService {
         maxWidth: number,
         maxHeight: number,
         paddingVertical: number = this.options.paddingBoxVertical || 0.6,
-        paddingHorizontal: number = this.options.paddingBoxHorizontal || 0.8,
+        paddingHorizontal: number = this.options.paddingBoxHorizontal || 0.8
     ) {
         const verticalPadding = Math.round(rect.height * paddingVertical);
         const horizontalPadding = Math.round(rect.height * paddingHorizontal);
@@ -179,7 +223,7 @@ export class DetectionService {
      */
     private convertToOriginalCoordinates(
         rect: { x: number; y: number; width: number; height: number },
-        resizeParams: ResizeParams,
+        resizeParams: ResizeParams
     ): Box {
         const scaledX = rect.x / resizeParams.scaleWidth;
         const scaledY = rect.y / resizeParams.scaleHeight;

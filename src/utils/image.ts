@@ -1,4 +1,4 @@
-import { Box } from "../interface.js";
+import type { Box } from "../interface.ts";
 
 interface CropOptions {
     x: number;
@@ -102,11 +102,15 @@ export class Image {
      */
     resize(options: ResizeOptions) {
         let { width, height } = options;
-        if (!width && !height) {
+        if (width === undefined && height === undefined) {
             throw new Error("At least one of width or height must be specified");
         }
-        if (!width) width = Math.round(this.width * (height! / this.height));
-        if (!height) height = Math.round(this.height * (width / this.width));
+        if (width === undefined) {
+            width = Math.round(this.width * ((height ?? this.height) / this.height));
+        }
+        if (height === undefined) {
+            height = Math.round(this.height * (width / this.width));
+        }
 
         const srcW = this.width;
         const srcH = this.height;
@@ -384,7 +388,11 @@ export class Image {
                     const queue = [[x, y]];
                     visited[at(x, y)] = 1;
                     while (queue.length) {
-                        const [cx, cy] = queue.shift()!;
+                        const current = queue.shift();
+                        if (!current) {
+                            break;
+                        }
+                        const [cx, cy] = current;
                         area++;
                         minX = Math.min(minX, cx);
                         minY = Math.min(minY, cy);
@@ -443,8 +451,10 @@ export class Image {
         if (!color.length) {
             color.push(...Array(this.channels).fill(255));
         }
-        if (this.channels != color.length) {
-            throw new Error(`Color length ${color.length} does not match image channels ${this.channels}`);
+        if (this.channels !== color.length) {
+            throw new Error(
+                `Color length ${color.length} does not match image channels ${this.channels}`
+            );
         }
         // 上下边
         for (let dy = 0; dy < lineWidth; dy++) {

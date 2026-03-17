@@ -1,9 +1,26 @@
-export { PaddleOcrService, type FlattenedPaddleOcrResult, type PaddleOcrResult } from "./processor/paddle-ocr";
+export {
+    DEFAULT_DETECTION_OPTIONS,
+    DEFAULT_PADDLE_OPTIONS,
+    DEFAULT_RECOGNITION_OPTIONS,
+} from "./constants.ts";
 
-export type { Box, DetectionServiceOptions, PaddleOptions, RecognitionServiceOptions } from "./interface";
+export type {
+    Box,
+    DetectionServiceOptions,
+    OcrProgress,
+    OrtInferenceSession,
+    OrtModule,
+    OrtTensor,
+    PaddleOcrProgressEvent,
+    PaddleOptions,
+    RecognitionOptions,
+    RecognitionServiceOptions,
+} from "./interface.ts";
 
-export { DetectionService, type PreprocessDetectionResult } from "./processor/detection";
-
-export { RecognitionService, type RecognitionResult } from "./processor/recognition";
-
-export { DEFAULT_DETECTION_OPTIONS, DEFAULT_PADDLE_OPTIONS, DEFAULT_RECOGNITION_OPTIONS } from "./constants";
+export { DetectionService, type PreprocessDetectionResult } from "./processor/detection.ts";
+export {
+    type FlattenedPaddleOcrResult,
+    type PaddleOcrResult,
+    PaddleOcrService,
+} from "./processor/paddle-ocr.ts";
+export { type RecognitionResult, RecognitionService } from "./processor/recognition.ts";

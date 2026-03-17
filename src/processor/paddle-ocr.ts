@@ -1,10 +1,13 @@
-import type * as ort from "onnxruntime-node";
-import { Image } from "../utils/image";
-import { DEFAULT_DETECTION_OPTIONS, DEFAULT_PADDLE_OPTIONS } from "../constants";
-
-import type { ImageInput, PaddleOptions, RecognitionOptions } from "../interface";
-import { DetectionService } from "./detection";
-import { RecognitionService, type RecognitionResult } from "./recognition";
+import { DEFAULT_DETECTION_OPTIONS, DEFAULT_PADDLE_OPTIONS } from "../constants.ts";
+import type {
+    ImageInput,
+    OrtInferenceSession,
+    PaddleOptions,
+    RecognitionOptions,
+} from "../interface.ts";
+import { Image } from "../utils/image.ts";
+import { DetectionService } from "./detection.ts";
+import { type RecognitionResult, RecognitionService } from "./recognition.ts";
 
 export interface PaddleOcrResult {
     text: string;
@@ -27,10 +30,10 @@ export interface FlattenedPaddleOcrResult {
 export class PaddleOcrService {
     options: PaddleOptions;
 
-    detectionSession: ort.InferenceSession | null = null;
+    detectionSession: OrtInferenceSession | null = null;
     detectionService: DetectionService | null = null;
 
-    recognitionSession: ort.InferenceSession | null = null;
+    recognitionSession: OrtInferenceSession | null = null;
     recognitionService: RecognitionService | null = null;
 
     /**
@@ -40,7 +43,7 @@ export class PaddleOcrService {
     constructor(options?: Partial<PaddleOptions>) {
         if (!options?.ort) {
             throw new Error(
-                "PaddleOcrService requires the 'ort' option to be set with onnxruntime-node or onnxruntime-wen.",
+                "PaddleOcrService requires the 'ort' option to be set with onnxruntime-node or onnxruntime-wen."
             );
         }
         this.options = {
@@ -53,28 +56,39 @@ export class PaddleOcrService {
      * Initialize the OCR service by loading models
      */
     public async initialize(): Promise<void> {
-        const ort = this.options.ort!;
+        const ort = this.options.ort;
+        if (!ort) {
+            throw new Error(
+                "PaddleOcrService requires the 'ort' option to be set with onnxruntime-node or onnxruntime-wen."
+            );
+        }
 
         // Init detection service
-        if (!this.options.detection?.modelBuffer) {
-            throw new Error("Detection model buffer is required. Please provide a valid ONNX model.");
+        const detectionModelBuffer = this.options.detection?.modelBuffer;
+        if (!detectionModelBuffer) {
+            throw new Error(
+                "Detection model buffer is required. Please provide a valid ONNX model."
+            );
         }
-        this.detectionSession = await ort.InferenceSession.create(this.options.detection?.modelBuffer!);
+        this.detectionSession = await ort.InferenceSession.create(detectionModelBuffer);
         this.detectionService = new DetectionService(
-            this.options.ort as any,
+            ort,
             this.detectionSession,
-            this.options.detection,
+            this.options.detection
         );
 
         // Init recognition service
-        if (!this.options.recognition?.modelBuffer) {
-            throw new Error("Recognition model buffer is required. Please provide a valid ONNX model.");
+        const recognitionModelBuffer = this.options.recognition?.modelBuffer;
+        if (!recognitionModelBuffer) {
+            throw new Error(
+                "Recognition model buffer is required. Please provide a valid ONNX model."
+            );
         }
-        this.recognitionSession = await ort.InferenceSession.create(this.options.recognition?.modelBuffer!);
+        this.recognitionSession = await ort.InferenceSession.create(recognitionModelBuffer);
         this.recognitionService = new RecognitionService(
-            this.options.ort as any,
+            ort,
             this.recognitionSession,
-            this.options.recognition,
+            this.options.recognition
         );
 
         if (!this.options.recognition?.charactersDictionary) {
@@ -109,14 +123,17 @@ export class PaddleOcrService {
      * @param options - Optional configuration for the recognition output, e.g., `{ flatten: true }`.
      * @return A promise that resolves to the OCR result, either grouped by lines or as a flat list.
      */
-    public async recognize(input: ImageInput, options?: RecognitionOptions): Promise<RecognitionResult[]> {
+    public async recognize(
+        input: ImageInput,
+        options?: RecognitionOptions
+    ): Promise<RecognitionResult[]> {
         if (!this.detectionService || !this.recognitionService) {
             throw new Error("PaddleOcrService is not initialized. Please call initialize() first.");
         }
         const channels = input.data.length / (input.width * input.height);
         if (!Number.isInteger(channels) || channels < 1 || channels > 4) {
             throw new Error(
-                `Invalid input data: ${input.data} for image size ${input.width}x${input.height}. Expected 1, 3, or 4 channels.`,
+                `Invalid input data: ${input.data} for image size ${input.width}x${input.height}. Expected 1, 3, or 4 channels.`
             );
         }
         let image = new Image(input.width, input.height, channels, input.data);
@@ -128,7 +145,7 @@ export class PaddleOcrService {
                 color: [255, 255, 255, 255],
             });
         }
-        const detection = await this.detectionService.run(image);
+        const detection = await this.detectionService.run(image, options?.onProgress);
         const recognition = await this.recognitionService.run(image, detection, options);
 
         return recognition;
@@ -168,7 +185,8 @@ export class PaddleOcrService {
                 currentLine.push(current);
                 fullText += ` ${current.text}`;
 
-                avgHeight = currentLine.reduce((sum, r) => sum + r.box.height, 0) / currentLine.length;
+                avgHeight =
+                    currentLine.reduce((sum, r) => sum + r.box.height, 0) / currentLine.length;
             } else {
                 result.lines.push([...currentLine]);
 

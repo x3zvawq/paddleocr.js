@@ -1,10 +1,13 @@
-import { readFile } from "fs/promises";
-import { PaddleOcrService } from "../src/index";
-import * as ort from "onnxruntime-node";
+import { readFile } from "node:fs/promises";
 import { decode } from "fast-png";
+import * as ort from "onnxruntime-node";
+import { PaddleOcrService } from "../src/index.ts";
 
 const imageFile = await readFile("examples/image.png");
-const buffer = imageFile.buffer.slice(imageFile.byteOffset, imageFile.byteOffset + imageFile.byteLength);
+const buffer = imageFile.buffer.slice(
+    imageFile.byteOffset,
+    imageFile.byteOffset + imageFile.byteLength
+);
 const image = decode(buffer);
 const input = {
     data: image.data as Uint8Array,
@@ -23,7 +26,7 @@ const paddleOcrService = await PaddleOcrService.createInstance({
     },
     recognition: {
         modelBuffer: recOnnx.buffer as ArrayBuffer,
-        charactersDictionary: dict,
+        charactersDictionary: [...dict, " "],
     },
 });
 

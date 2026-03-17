@@ -1,6 +1,13 @@
-import type { DetectionServiceOptions, PaddleOptions, RecognitionServiceOptions } from "./interface";
+import type {
+    DetectionServiceOptions,
+    PaddleOptions,
+    RecognitionServiceOptions,
+} from "./interface.ts";
 
-export const DEFAULT_DETECTION_OPTIONS: Partial<DetectionServiceOptions> = {
+type DetectionDefaults = Required<Omit<DetectionServiceOptions, "modelBuffer">>;
+type RecognitionDefaults = Required<Omit<RecognitionServiceOptions, "modelBuffer">>;
+
+export const DEFAULT_DETECTION_OPTIONS: DetectionDefaults = {
     padding: 0,
     mean: [0.485 * 255, 0.456 * 255, 0.406 * 255],
     stdDeviation: [1 / 0.229 / 255, 1 / 0.224 / 255, 1 / 0.255 / 255],
@@ -11,7 +18,7 @@ export const DEFAULT_DETECTION_OPTIONS: Partial<DetectionServiceOptions> = {
     paddingBoxHorizontal: 0.6,
 };
 
-export const DEFAULT_RECOGNITION_OPTIONS: Partial<RecognitionServiceOptions> = {
+export const DEFAULT_RECOGNITION_OPTIONS: RecognitionDefaults = {
     mean: [127.5, 127.5, 127.5],
     stdDeviation: [1.0 / 127.5, 1.0 / 127.5, 1.0 / 127.5],
     imageHeight: 48,

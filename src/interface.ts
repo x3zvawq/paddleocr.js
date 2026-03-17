@@ -1,5 +1,4 @@
-import type * as webOrt from "onnxruntime-web";
-import type * as nodeOrt from "onnxruntime-node";
+import type { RecognitionResult } from "./processor/recognition.ts";
 
 export interface ImageInput {
     width: number;
@@ -93,6 +92,30 @@ export interface RecognitionServiceOptions {
     charactersDictionary?: string[];
 }
 
+export interface OrtTensor {
+    data: unknown;
+    dims: readonly number[];
+}
+
+export interface OrtInferenceSession {
+    outputNames: readonly string[];
+    run(feeds: Record<string, OrtTensor>): Promise<Record<string, OrtTensor>>;
+    release?(): Promise<void>;
+}
+
+export interface OrtTensorConstructor {
+    new (type: string, data: Float32Array, dims: readonly number[]): OrtTensor;
+}
+
+export interface OrtInferenceSessionConstructor {
+    create(modelBuffer: ArrayBuffer): Promise<OrtInferenceSession>;
+}
+
+export interface OrtModule {
+    Tensor: OrtTensorConstructor;
+    InferenceSession: OrtInferenceSessionConstructor;
+}
+
 /**
  * Full configuration for the PaddleOCR service.
  * Combines model file paths with detection, recognition, and debugging parameters.
@@ -101,7 +124,7 @@ export interface PaddleOptions {
     /**
      * onnxruntime module
      */
-    ort?: typeof webOrt | typeof nodeOrt;
+    ort?: OrtModule;
 
     /**
      * Controls parameters for text detection.
@@ -119,7 +142,30 @@ export interface PaddleOptions {
  */
 export interface RecognitionOptions {
     charWhiteList?: string[];
+    onProgress?: (event: PaddleOcrProgressEvent) => void;
 }
+
+export interface OcrProgress {
+    current: number;
+    remain: number;
+    total: number;
+}
+
+export type PaddleOcrProgressEvent =
+    | {
+          type: "det";
+          stage: "preprocess" | "infer" | "postprocess";
+          progress: OcrProgress;
+          detectedCount?: number;
+      }
+    | {
+          type: "rec";
+          stage: "start" | "item" | "complete";
+          progress: OcrProgress;
+          index?: number;
+          box?: Box;
+          result?: RecognitionResult;
+      };
 
 /**
  * Simple rectangle representation.
