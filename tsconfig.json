@@ -1,30 +1,17 @@
 {
     "compilerOptions": {
-        "outDir": "dist",
-        "baseUrl": ".",
-        "incremental": false,
-        "module": "preserve",
-        "moduleResolution": "bundler",
-        "inlineSources": false,
-        "removeComments": true,
-        "sourceMap": false,
+        "allowImportingTsExtensions": true,
         "target": "esnext",
+        "declaration": true,
+        "sourceMap": true,
+        "module": "ESNext",
+        "moduleResolution": "Bundler",
+        "noEmit": true,
+        "esModuleInterop": true,
         "skipLibCheck": true,
-        "importHelpers": true,
-        "strict": true,
-        "resolveJsonModule": true,
-        "forceConsistentCasingInFileNames": true,
-        "noImplicitReturns": true,
-        "noImplicitThis": true,
-        "noImplicitAny": true,
-        "noUnusedParameters": true,
-        "noUnusedLocals": true,
-        "erasableSyntaxOnly": true
+        "erasableSyntaxOnly": true,
+        "types": ["node"]
     },
-    "include": [
-        "src/**/*",
-    ],
-    "exclude": [
-        "node_modules"
-    ]
+    "exclude": ["node_modules", "dist"],
+    "include": ["./src/**/*", "./test/**/*"]
 }
