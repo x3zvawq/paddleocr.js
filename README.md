@@ -50,13 +50,20 @@ const paddleOcrService = await PaddleOcrService.createInstance({
     ort,
     detection: {
         modelBuffer: detectOnnx,
+        minimumAreaThreshold: 24,
+        textPixelThreshold: 0.55,
+        paddingBoxVertical: 0.3,
+        paddingBoxHorizontal: 0.5,
     },
     recognition: {
         modelBuffer: recOnnx,
         charactersDictionary: dict,
+        imageHeight: 48,
     },
 });
 ```
+
+The `detection` and `recognition` objects above act as instance defaults. They are applied to every `recognize()` call unless you override them per request.
 
 ### 4. Prepare Image Data
 
@@ -103,6 +110,57 @@ Event contract:
 - `rec` emits `start`, one `item` per detected text box, then `complete`
 - `rec/item` includes the current `result` and `box`
 - `det/postprocess` includes `detectedCount`
+
+### 7. Tune Detection, Recognition, and Ordering
+
+You can set defaults when creating the instance, then override them for a single image.
+
+```js
+const strictResult = await paddleOcrService.recognize(invoiceInput, {
+    detection: {
+        minimumAreaThreshold: 40,
+        textPixelThreshold: 0.65,
+        paddingBoxVertical: 0,
+        paddingBoxHorizontal: 0,
+        dilationKernelSize: 3,
+    },
+    recognition: {
+        imageHeight: 64,
+        charactersDictionary: digitsOnlyDict,
+    },
+    ordering: {
+        sortByReadingOrder: true,
+        sameLineThresholdRatio: 0.15,
+    },
+});
+
+const looseResult = await paddleOcrService.recognize(noteInput, {
+    detection: {
+        minimumAreaThreshold: 8,
+        textPixelThreshold: 0.45,
+    },
+});
+```
+
+Supported per-call override groups:
+
+- `detection`: `padding`, `mean`, `stdDeviation`, `maxSideLength`, `paddingBoxVertical`, `paddingBoxHorizontal`, `minimumAreaThreshold`, `textPixelThreshold`, `dilationKernelSize`
+- `recognition`: `imageHeight`, `mean`, `stdDeviation`, `charactersDictionary`
+- `ordering`: `sortByReadingOrder`, `sameLineThresholdRatio`
+
+`charactersDictionary` can be provided either when creating the instance or per call. If neither is provided, `recognize()` throws.
+
+### 8. Control Line Merging in `processRecognition`
+
+```js
+const rawRecognition = await paddleOcrService.recognize(input);
+const processed = paddleOcrService.processRecognition(rawRecognition, {
+    lineMergeThresholdRatio: 0.8,
+});
+
+console.log(processed.text);
+console.log(processed.lines);
+```
 
 ## Model Files
 

@@ -1,4 +1,4 @@
-import { DEFAULT_RECOGNITION_OPTIONS } from "../constants.ts";
+import { DEFAULT_RECOGNITION_OPTIONS, DEFAULT_RECOGNITION_ORDERING_OPTIONS } from "../constants.ts";
 import type {
     Box,
     OcrProgress,
@@ -6,7 +6,8 @@ import type {
     OrtModule,
     OrtTensor,
     RecognitionOptions,
-    RecognitionServiceOptions,
+    RecognitionOrderingOptions,
+    RecognitionRuntimeOptions,
 } from "../interface.ts";
 import type { Image } from "../utils/image.ts";
 
@@ -27,14 +28,14 @@ export interface SingleRecognitionTask {
  * Service for detecting and recognizing text in images
  */
 export class RecognitionService {
-    private readonly options: RecognitionServiceOptions;
+    private readonly options: RecognitionRuntimeOptions;
     private readonly session: OrtInferenceSession;
     private readonly ortModule: OrtModule;
 
     constructor(
         ortModule: OrtModule,
         session: OrtInferenceSession,
-        options: Partial<RecognitionServiceOptions> = {}
+        options: Partial<RecognitionRuntimeOptions> = {}
     ) {
         this.session = session;
         this.ortModule = ortModule;
@@ -56,8 +57,11 @@ export class RecognitionService {
         detection: Box[],
         options?: RecognitionOptions
     ): Promise<RecognitionResult[]> {
+        const recognitionOptions = this.resolveRuntimeOptions(options?.recognition);
+        const orderingOptions = this.resolveOrderingOptions(options?.ordering);
         const validBoxes = this.sortBoxesByReadingOrder(
-            detection.filter((box) => box.width > 0 && box.height > 0)
+            detection.filter((box) => box.width > 0 && box.height > 0),
+            orderingOptions
         );
         const results: RecognitionResult[] = [];
         const charWhiteListSet = options?.charWhiteList?.length
@@ -73,12 +77,15 @@ export class RecognitionService {
         });
 
         for (const [i, box] of validBoxes.entries()) {
-            const result = await this.processBox({
-                image: image,
-                index: i,
-                box: box,
-                charWhiteSet: charWhiteListSet,
-            });
+            const result = await this.processBox(
+                {
+                    image: image,
+                    index: i,
+                    box: box,
+                    charWhiteSet: charWhiteListSet,
+                },
+                recognitionOptions
+            );
             if (result) {
                 results.push(result);
             }
@@ -101,19 +108,40 @@ export class RecognitionService {
         return results;
     }
 
+    private resolveRuntimeOptions(
+        options: Partial<RecognitionRuntimeOptions> = {}
+    ): RecognitionRuntimeOptions {
+        return {
+            ...this.options,
+            ...options,
+        };
+    }
+
+    private resolveOrderingOptions(
+        options: Partial<RecognitionOrderingOptions> = {}
+    ): RecognitionOrderingOptions {
+        return {
+            ...DEFAULT_RECOGNITION_ORDERING_OPTIONS,
+            ...options,
+        };
+    }
+
     /**
      * Process a single text box
      */
-    private async processBox(task: SingleRecognitionTask): Promise<RecognitionResult | null> {
+    private async processBox(
+        task: SingleRecognitionTask,
+        runtimeOptions: RecognitionRuntimeOptions
+    ): Promise<RecognitionResult | null> {
         const { image, box } = task;
 
         const crop = image.crop(box);
         const resizedCrop = crop.resize({
-            height: this.options.imageHeight ?? DEFAULT_RECOGNITION_OPTIONS.imageHeight,
+            height: runtimeOptions.imageHeight,
         });
         const tensor = resizedCrop.tensor({
-            mean_values: this.options.mean ?? DEFAULT_RECOGNITION_OPTIONS.mean,
-            norm_values: this.options.stdDeviation ?? DEFAULT_RECOGNITION_OPTIONS.stdDeviation,
+            mean_values: runtimeOptions.mean,
+            norm_values: runtimeOptions.stdDeviation,
         });
 
         const inputTensor = new this.ortModule.Tensor("float32", tensor, [
@@ -129,6 +157,7 @@ export class RecognitionService {
             outputData as Float32Array,
             sequenceLength,
             numClasses,
+            runtimeOptions,
             task.charWhiteSet
         );
 
@@ -138,9 +167,19 @@ export class RecognitionService {
     /**
      * Sort recognition results by reading order (top to bottom, left to right)
      */
-    private sortBoxesByReadingOrder(boxes: Box[]): Box[] {
+    private sortBoxesByReadingOrder(
+        boxes: Box[],
+        orderingOptions: RecognitionOrderingOptions
+    ): Box[] {
+        if (!orderingOptions.sortByReadingOrder) {
+            return [...boxes];
+        }
+
         return [...boxes].sort((boxA, boxB) => {
-            if (Math.abs(boxA.y - boxB.y) < (boxA.height + boxB.height) / 4) {
+            if (
+                Math.abs(boxA.y - boxB.y) <
+                (boxA.height + boxB.height) * orderingOptions.sameLineThresholdRatio
+            ) {
                 return boxA.x - boxB.x;
             }
             return boxA.y - boxB.y;
@@ -178,10 +217,10 @@ export class RecognitionService {
         logits: Float32Array,
         sequenceLength: number,
         numClasses: number,
+        runtimeOptions: RecognitionRuntimeOptions,
         charWhiteSet?: Set<string>
     ): { text: string; confidence: number } {
-        const dict =
-            this.options.charactersDictionary ?? DEFAULT_RECOGNITION_OPTIONS.charactersDictionary;
+        const dict = runtimeOptions.charactersDictionary;
         let text = "";
         const scores: number[] = [];
 

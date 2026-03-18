@@ -1,9 +1,19 @@
-import { DEFAULT_DETECTION_OPTIONS, DEFAULT_PADDLE_OPTIONS } from "../constants.ts";
+import {
+    DEFAULT_DETECTION_OPTIONS,
+    DEFAULT_PADDLE_OPTIONS,
+    DEFAULT_PROCESS_RECOGNITION_OPTIONS,
+    DEFAULT_RECOGNITION_OPTIONS,
+    DEFAULT_RECOGNITION_ORDERING_OPTIONS,
+} from "../constants.ts";
 import type {
+    DetectionRuntimeOptions,
     ImageInput,
     OrtInferenceSession,
     PaddleOptions,
+    ProcessRecognitionOptions,
     RecognitionOptions,
+    RecognitionOrderingOptions,
+    RecognitionRuntimeOptions,
 } from "../interface.ts";
 import { Image } from "../utils/image.ts";
 import { DetectionService } from "./detection.ts";
@@ -71,11 +81,9 @@ export class PaddleOcrService {
             );
         }
         this.detectionSession = await ort.InferenceSession.create(detectionModelBuffer);
-        this.detectionService = new DetectionService(
-            ort,
-            this.detectionSession,
-            this.options.detection
-        );
+        const { modelBuffer: _detectionModelBuffer, ...detectionOptions } =
+            this.options.detection ?? {};
+        this.detectionService = new DetectionService(ort, this.detectionSession, detectionOptions);
 
         // Init recognition service
         const recognitionModelBuffer = this.options.recognition?.modelBuffer;
@@ -85,15 +93,13 @@ export class PaddleOcrService {
             );
         }
         this.recognitionSession = await ort.InferenceSession.create(recognitionModelBuffer);
+        const { modelBuffer: _recognitionModelBuffer, ...recognitionOptions } =
+            this.options.recognition ?? {};
         this.recognitionService = new RecognitionService(
             ort,
             this.recognitionSession,
-            this.options.recognition
+            recognitionOptions
         );
-
-        if (!this.options.recognition?.charactersDictionary) {
-            throw new Error(`options.recognition.characterDictionary is empty or not found.`);
-        }
     }
 
     /**
@@ -113,6 +119,39 @@ export class PaddleOcrService {
         await instance.initialize();
 
         return instance;
+    }
+
+    private resolveDetectionRuntimeOptions(
+        options: Partial<DetectionRuntimeOptions> = {}
+    ): DetectionRuntimeOptions {
+        const { modelBuffer: _modelBuffer, ...instanceOptions } = this.options.detection ?? {};
+
+        return {
+            ...DEFAULT_DETECTION_OPTIONS,
+            ...instanceOptions,
+            ...options,
+        };
+    }
+
+    private resolveRecognitionRuntimeOptions(
+        options: Partial<RecognitionRuntimeOptions> = {}
+    ): RecognitionRuntimeOptions {
+        const { modelBuffer: _modelBuffer, ...instanceOptions } = this.options.recognition ?? {};
+
+        return {
+            ...DEFAULT_RECOGNITION_OPTIONS,
+            ...instanceOptions,
+            ...options,
+        };
+    }
+
+    private resolveRecognitionOrderingOptions(
+        options: Partial<RecognitionOrderingOptions> = {}
+    ): RecognitionOrderingOptions {
+        return {
+            ...DEFAULT_RECOGNITION_ORDERING_OPTIONS,
+            ...options,
+        };
     }
 
     /**
@@ -136,17 +175,35 @@ export class PaddleOcrService {
                 `Invalid input data: ${input.data} for image size ${input.width}x${input.height}. Expected 1, 3, or 4 channels.`
             );
         }
+        const detectionRuntimeOptions = this.resolveDetectionRuntimeOptions(options?.detection);
+        const recognitionRuntimeOptions = this.resolveRecognitionRuntimeOptions(
+            options?.recognition
+        );
+        const orderingOptions = this.resolveRecognitionOrderingOptions(options?.ordering);
+        if (!recognitionRuntimeOptions.charactersDictionary?.length) {
+            throw new Error(
+                "Recognition charactersDictionary is required. Provide it in createInstance({ recognition }) or recognize(_, { recognition })."
+            );
+        }
         let image = new Image(input.width, input.height, channels, input.data);
 
-        const padding = this.options.detection?.padding ?? DEFAULT_DETECTION_OPTIONS.padding;
+        const padding = detectionRuntimeOptions.padding;
         if (padding) {
             image = image.padding({
                 padding,
                 color: [255, 255, 255, 255],
             });
         }
-        const detection = await this.detectionService.run(image, options?.onProgress);
-        const recognition = await this.recognitionService.run(image, detection, options);
+        const detection = await this.detectionService.run(image, {
+            ...detectionRuntimeOptions,
+            onProgress: options?.onProgress,
+        });
+        const recognition = await this.recognitionService.run(image, detection, {
+            ...options,
+            detection: detectionRuntimeOptions,
+            recognition: recognitionRuntimeOptions,
+            ordering: orderingOptions,
+        });
 
         return recognition;
     }
@@ -155,7 +212,10 @@ export class PaddleOcrService {
      * Processes raw recognition results to generate the final text,
      * grouped lines, and overall confidence.
      */
-    processRecognition(recognition: RecognitionResult[]): PaddleOcrResult {
+    processRecognition(
+        recognition: RecognitionResult[],
+        options?: ProcessRecognitionOptions
+    ): PaddleOcrResult {
         const result: PaddleOcrResult = {
             text: "",
             lines: [],
@@ -169,6 +229,10 @@ export class PaddleOcrService {
         // Calculate overall confidence as the average of all individual confidences
         const totalConfidence = recognition.reduce((sum, r) => sum + r.confidence, 0);
         result.confidence = totalConfidence / recognition.length;
+        const processOptions = {
+            ...DEFAULT_PROCESS_RECOGNITION_OPTIONS,
+            ...options,
+        };
 
         let currentLine: RecognitionResult[] = [recognition[0]];
         let fullText = recognition[0].text;
@@ -179,7 +243,7 @@ export class PaddleOcrService {
             const previous = recognition[i - 1];
 
             const verticalGap = Math.abs(current.box.y - previous.box.y);
-            const threshold = avgHeight * 0.5;
+            const threshold = avgHeight * processOptions.lineMergeThresholdRatio;
 
             if (verticalGap <= threshold) {
                 currentLine.push(current);

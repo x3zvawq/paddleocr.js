@@ -50,13 +50,20 @@ const paddleOcrService = await PaddleOcrService.createInstance({
     ort,
     detection: {
         modelBuffer: detectOnnx,
+        minimumAreaThreshold: 24,
+        textPixelThreshold: 0.55,
+        paddingBoxVertical: 0.3,
+        paddingBoxHorizontal: 0.5,
     },
     recognition: {
         modelBuffer: recOnnx,
         charactersDictionary: dict,
+        imageHeight: 48,
     },
 });
 ```
+
+上面的 `detection` 和 `recognition` 配置会作为实例级默认值，后续每次 `recognize()` 都会继承，除非你在单次调用里覆盖它们。
 
 ### 4. 准备图片数据
 
@@ -103,6 +110,57 @@ const result = await paddleOcrService.recognize(input, {
 - `rec` 会先发 `start`，然后每个文本框完成时发一次 `item`，最后发 `complete`
 - `rec/item` 会带上当前 `result` 和 `box`
 - `det/postprocess` 会额外带上 `detectedCount`
+
+### 7. 调整 Detection、Recognition 和排序参数
+
+你可以先在实例上设置默认值，再针对单张图片覆盖参数。
+
+```js
+const strictResult = await paddleOcrService.recognize(invoiceInput, {
+    detection: {
+        minimumAreaThreshold: 40,
+        textPixelThreshold: 0.65,
+        paddingBoxVertical: 0,
+        paddingBoxHorizontal: 0,
+        dilationKernelSize: 3,
+    },
+    recognition: {
+        imageHeight: 64,
+        charactersDictionary: digitsOnlyDict,
+    },
+    ordering: {
+        sortByReadingOrder: true,
+        sameLineThresholdRatio: 0.15,
+    },
+});
+
+const looseResult = await paddleOcrService.recognize(noteInput, {
+    detection: {
+        minimumAreaThreshold: 8,
+        textPixelThreshold: 0.45,
+    },
+});
+```
+
+支持的单次调用覆盖项：
+
+- `detection`: `padding`、`mean`、`stdDeviation`、`maxSideLength`、`paddingBoxVertical`、`paddingBoxHorizontal`、`minimumAreaThreshold`、`textPixelThreshold`、`dilationKernelSize`
+- `recognition`: `imageHeight`、`mean`、`stdDeviation`、`charactersDictionary`
+- `ordering`: `sortByReadingOrder`、`sameLineThresholdRatio`
+
+`charactersDictionary` 可以在实例初始化时提供，也可以在单次 `recognize()` 调用时提供。如果两边都没传，`recognize()` 会直接抛错。
+
+### 8. 在 `processRecognition` 中控制分行阈值
+
+```js
+const rawRecognition = await paddleOcrService.recognize(input);
+const processed = paddleOcrService.processRecognition(rawRecognition, {
+    lineMergeThresholdRatio: 0.8,
+});
+
+console.log(processed.text);
+console.log(processed.lines);
+```
 
 ## 模型文件
 

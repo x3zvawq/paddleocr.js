@@ -1,11 +1,15 @@
 import type {
-    DetectionServiceOptions,
+    DetectionRuntimeOptions,
     PaddleOptions,
-    RecognitionServiceOptions,
+    ProcessRecognitionOptions,
+    RecognitionOrderingOptions,
+    RecognitionRuntimeOptions,
 } from "./interface.ts";
 
-type DetectionDefaults = Required<Omit<DetectionServiceOptions, "modelBuffer">>;
-type RecognitionDefaults = Required<Omit<RecognitionServiceOptions, "modelBuffer">>;
+type DetectionDefaults = Required<DetectionRuntimeOptions>;
+type RecognitionDefaults = Required<RecognitionRuntimeOptions>;
+type RecognitionOrderingDefaults = Required<RecognitionOrderingOptions>;
+type ProcessRecognitionDefaults = Required<ProcessRecognitionOptions>;
 
 export const DEFAULT_DETECTION_OPTIONS: DetectionDefaults = {
     padding: 0,
@@ -16,6 +20,7 @@ export const DEFAULT_DETECTION_OPTIONS: DetectionDefaults = {
     minimumAreaThreshold: 20,
     paddingBoxVertical: 0.4,
     paddingBoxHorizontal: 0.6,
+    dilationKernelSize: 1,
 };
 
 export const DEFAULT_RECOGNITION_OPTIONS: RecognitionDefaults = {
@@ -23,6 +28,15 @@ export const DEFAULT_RECOGNITION_OPTIONS: RecognitionDefaults = {
     stdDeviation: [1.0 / 127.5, 1.0 / 127.5, 1.0 / 127.5],
     imageHeight: 48,
     charactersDictionary: [],
+};
+
+export const DEFAULT_RECOGNITION_ORDERING_OPTIONS: RecognitionOrderingDefaults = {
+    sortByReadingOrder: true,
+    sameLineThresholdRatio: 0.25,
+};
+
+export const DEFAULT_PROCESS_RECOGNITION_OPTIONS: ProcessRecognitionDefaults = {
+    lineMergeThresholdRatio: 0.5,
 };
 
 export const DEFAULT_PADDLE_OPTIONS: Partial<PaddleOptions> = {

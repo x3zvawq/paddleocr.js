@@ -7,25 +7,20 @@ export interface ImageInput {
 }
 
 /**
- * Parameters for the text detection service.
+ * Runtime parameters for text detection.
  */
-export interface DetectionServiceOptions {
+export interface DetectionRuntimeOptions {
     padding?: number;
 
     /**
-     * ArrayBuffer containing the ONNX model for text detection.
-     */
-    modelBuffer?: ArrayBuffer;
-
-    /**
      * Per-channel mean values used to normalize input pixels [R, G, B].
-     * @default [0.485, 0.456, 0.406]
+     * @default [123.675, 116.28, 103.53]
      */
     mean?: [number, number, number];
 
     /**
      * Per-channel standard deviation values used to normalize input pixels [R, G, B].
-     * @default [0.229, 0.224, 0.225]
+     * @default [0.017124753831663668, 0.01750700280112045, 0.015378700499807768]
      */
     stdDeviation?: [number, number, number];
 
@@ -37,13 +32,13 @@ export interface DetectionServiceOptions {
     maxSideLength?: number;
 
     /**
-     * Padding applied to each detected box vertical as a fraction of its height
+     * Padding applied to each detected box vertically as a fraction of its height.
      * @default 0.4
      */
     paddingBoxVertical?: number;
 
     /**
-     * Padding applied to each detected box vertical as a fraction of its height
+     * Padding applied to each detected box horizontally as a fraction of its height.
      * @default 0.6
      */
     paddingBoxHorizontal?: number;
@@ -55,17 +50,28 @@ export interface DetectionServiceOptions {
     minimumAreaThreshold?: number;
 
     textPixelThreshold?: number;
+
+    /**
+     * Kernel size used in detection dilation post-processing.
+     * @default 1
+     */
+    dilationKernelSize?: number;
 }
 
 /**
- * Parameters for the text recognition service.
+ * Parameters for the text detection service.
  */
-export interface RecognitionServiceOptions {
+export interface DetectionServiceOptions extends DetectionRuntimeOptions {
     /**
-     * ArrayBuffer containing the ONNX model for text recognition.
+     * ArrayBuffer containing the ONNX model for text detection.
      */
     modelBuffer?: ArrayBuffer;
+}
 
+/**
+ * Runtime parameters for text recognition.
+ */
+export interface RecognitionRuntimeOptions {
     /**
      * Fixed height for input images, in pixels.
      * Models will resize width proportionally.
@@ -75,13 +81,13 @@ export interface RecognitionServiceOptions {
 
     /**
      * Per-channel mean values used to normalize input pixels [R, G, B].
-     * @default [0.485, 0.456, 0.406]
+     * @default [127.5, 127.5, 127.5]
      */
     mean?: [number, number, number];
 
     /**
      * Per-channel standard deviation values used to normalize input pixels [R, G, B].
-     * @default [0.229, 0.224, 0.225]
+     * @default [0.00784313725490196, 0.00784313725490196, 0.00784313725490196]
      */
     stdDeviation?: [number, number, number];
 
@@ -90,6 +96,46 @@ export interface RecognitionServiceOptions {
      * recognition result decoding.
      */
     charactersDictionary?: string[];
+}
+
+/**
+ * Parameters for the text recognition service.
+ */
+export interface RecognitionServiceOptions extends RecognitionRuntimeOptions {
+    /**
+     * ArrayBuffer containing the ONNX model for text recognition.
+     */
+    modelBuffer?: ArrayBuffer;
+}
+
+/**
+ * Parameters for sorting detection boxes into reading order.
+ */
+export interface RecognitionOrderingOptions {
+    /**
+     * Whether recognition results should be sorted in reading order.
+     * @default true
+     */
+    sortByReadingOrder?: boolean;
+
+    /**
+     * Threshold ratio used to decide whether two boxes are on the same line.
+     * The threshold is `(boxA.height + boxB.height) * sameLineThresholdRatio`.
+     * @default 0.25
+     */
+    sameLineThresholdRatio?: number;
+}
+
+/**
+ * Parameters for post-processing recognition results into lines.
+ */
+export interface ProcessRecognitionOptions {
+    /**
+     * Threshold ratio used to merge results into the same line.
+     * The threshold is `averageLineHeight * lineMergeThresholdRatio`.
+     * @default 0.5
+     */
+    lineMergeThresholdRatio?: number;
 }
 
 export interface OrtTensor {
@@ -143,6 +189,9 @@ export interface PaddleOptions {
 export interface RecognitionOptions {
     charWhiteList?: string[];
     onProgress?: (event: PaddleOcrProgressEvent) => void;
+    detection?: Partial<DetectionRuntimeOptions>;
+    recognition?: Partial<RecognitionRuntimeOptions>;
+    ordering?: Partial<RecognitionOrderingOptions>;
 }
 
 export interface OcrProgress {

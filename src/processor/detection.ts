@@ -1,7 +1,7 @@
 import { DEFAULT_DETECTION_OPTIONS } from "../constants.ts";
 import type {
     Box,
-    DetectionServiceOptions,
+    DetectionRuntimeOptions,
     OcrProgress,
     OrtInferenceSession,
     OrtModule,
@@ -26,19 +26,23 @@ export interface PreprocessDetectionResult {
     resizeParams: ResizeParams;
 }
 
+export interface DetectionRunOptions extends Partial<DetectionRuntimeOptions> {
+    onProgress?: (event: PaddleOcrProgressEvent) => void;
+}
+
 /**
  * Service for detecting text regions in images
  */
 export class DetectionService {
     private static readonly TOTAL_PROGRESS_STEPS = 3;
-    private readonly options: DetectionServiceOptions;
+    private readonly options: DetectionRuntimeOptions;
     private readonly session: OrtInferenceSession;
     private readonly ortModule: OrtModule;
 
     constructor(
         ortModule: OrtModule,
         session: OrtInferenceSession,
-        options: Partial<DetectionServiceOptions> = {}
+        options: Partial<DetectionRuntimeOptions> = {}
     ) {
         this.session = session;
         this.ortModule = ortModule;
@@ -53,8 +57,10 @@ export class DetectionService {
      * Main method to run text detection on an image
      * @param image ArrayBuffer of the image or Canvas
      */
-    async run(image: Image, onProgress?: (event: PaddleOcrProgressEvent) => void): Promise<Box[]> {
-        const input = await this.preprocessDetection(image);
+    async run(image: Image, options: DetectionRunOptions = {}): Promise<Box[]> {
+        const { onProgress, ...runtimeOverrides } = options;
+        const runtimeOptions = this.resolveRuntimeOptions(runtimeOverrides);
+        const input = await this.preprocessDetection(image, runtimeOptions);
         onProgress?.({
             type: "det",
             stage: "preprocess",
@@ -68,7 +74,9 @@ export class DetectionService {
             progress: this.createProgress(2),
         });
 
-        const detectedBoxes = detection ? this.postprocessDetection(detection, input) : [];
+        const detectedBoxes = detection
+            ? this.postprocessDetection(detection, input, runtimeOptions)
+            : [];
         onProgress?.({
             type: "det",
             stage: "postprocess",
@@ -77,6 +85,15 @@ export class DetectionService {
         });
 
         return detectedBoxes;
+    }
+
+    private resolveRuntimeOptions(
+        options: Partial<DetectionRuntimeOptions> = {}
+    ): DetectionRuntimeOptions {
+        return {
+            ...this.options,
+            ...options,
+        };
     }
 
     private createProgress(current: number): OcrProgress {
@@ -90,16 +107,19 @@ export class DetectionService {
     /**
      * Preprocess an image for text detection
      */
-    private async preprocessDetection(image: Image): Promise<PreprocessDetectionResult> {
-        const resizeParams = this.calculateResizeDimensions(image);
+    private async preprocessDetection(
+        image: Image,
+        runtimeOptions: DetectionRuntimeOptions
+    ): Promise<PreprocessDetectionResult> {
+        const resizeParams = this.calculateResizeDimensions(image, runtimeOptions);
 
         const resizedImage = image.resize({
             width: resizeParams.dstWidth,
             height: resizeParams.dstHeight,
         });
         const tensor = resizedImage.tensor({
-            mean_values: this.options.mean ?? DEFAULT_DETECTION_OPTIONS.mean,
-            norm_values: this.options.stdDeviation ?? DEFAULT_DETECTION_OPTIONS.stdDeviation,
+            mean_values: runtimeOptions.mean,
+            norm_values: runtimeOptions.stdDeviation,
         });
 
         return {
@@ -111,8 +131,8 @@ export class DetectionService {
     /**
      * Calculate dimensions for resizing the image
      */
-    private calculateResizeDimensions(image: Image) {
-        const MAX_SIDE_LEN = this.options.maxSideLength ?? DEFAULT_DETECTION_OPTIONS.maxSideLength;
+    private calculateResizeDimensions(image: Image, runtimeOptions: DetectionRuntimeOptions) {
+        const MAX_SIDE_LEN = runtimeOptions.maxSideLength;
         const { width: srcWidth, height: srcHeight } = image;
         const ratio = srcWidth > srcHeight ? MAX_SIDE_LEN / srcWidth : MAX_SIDE_LEN / srcHeight;
         let dstWidth = Math.floor(srcWidth * ratio);
@@ -160,7 +180,11 @@ export class DetectionService {
     /**
      * Process detection results to extract bounding boxes
      */
-    private postprocessDetection(detection: Float32Array, input: PreprocessDetectionResult): Box[] {
+    private postprocessDetection(
+        detection: Float32Array,
+        input: PreprocessDetectionResult,
+        runtimeOptions: DetectionRuntimeOptions
+    ): Box[] {
         const { dstWidth, dstHeight } = input.resizeParams;
         const greyImage = new Image(
             dstWidth,
@@ -169,20 +193,17 @@ export class DetectionService {
             new Uint8Array(detection.map((v) => Math.round(v * 255)))
         );
         const thresholdedImage = greyImage.threshold({
-            threshold:
-                255 *
-                (this.options.textPixelThreshold ?? DEFAULT_DETECTION_OPTIONS.textPixelThreshold),
+            threshold: 255 * runtimeOptions.textPixelThreshold,
         });
         const dilateImage = thresholdedImage.dilate({
             norm: "LInf",
-            k: 1,
+            k: runtimeOptions.dilationKernelSize,
         });
         const boxes = dilateImage.contours({
-            minArea:
-                this.options.minimumAreaThreshold ?? DEFAULT_DETECTION_OPTIONS.minimumAreaThreshold,
+            minArea: runtimeOptions.minimumAreaThreshold,
         });
         const finalBoxes = boxes.map((box) => {
-            const paddedBox = this.applyPaddingToRect(box, dstWidth, dstHeight);
+            const paddedBox = this.applyPaddingToRect(box, dstWidth, dstHeight, runtimeOptions);
             const finalBox = this.convertToOriginalCoordinates(paddedBox, input.resizeParams);
             return finalBox;
         });
@@ -196,9 +217,10 @@ export class DetectionService {
         rect: { x: number; y: number; width: number; height: number },
         maxWidth: number,
         maxHeight: number,
-        paddingVertical: number = this.options.paddingBoxVertical || 0.6,
-        paddingHorizontal: number = this.options.paddingBoxHorizontal || 0.8
+        runtimeOptions: DetectionRuntimeOptions
     ) {
+        const paddingVertical = runtimeOptions.paddingBoxVertical;
+        const paddingHorizontal = runtimeOptions.paddingBoxHorizontal;
         const verticalPadding = Math.round(rect.height * paddingVertical);
         const horizontalPadding = Math.round(rect.height * paddingHorizontal);
 
