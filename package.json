@@ -1,17 +1,17 @@
 {
     "name": "paddleocr",
-    "version": "1.1.1",
+    "version": "1.2.0",
     "description": "A cross-platform OCR library based on PaddleOCR v5 and ONNX Runtime that is as small as possible.",
     "keywords": [
         "ocr"
     ],
-    "homepage": "https://github.com/X3ZvaWQ/paddleocr.js#readme",
+    "homepage": "https://github.com/x3zvawq/paddleocr.js#readme",
     "bugs": {
-        "url": "https://github.com/X3ZvaWQ/paddleocr.js/issues"
+        "url": "https://github.com/x3zvawq/paddleocr.js/issues"
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/X3ZvaWQ/paddleocr.js.git"
+        "url": "git+https://github.com/x3zvawq/paddleocr.js.git"
     },
     "license": "MIT",
     "author": "x3zvawq",

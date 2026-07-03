@@ -45,7 +45,9 @@ Node.js、Bun 和浏览器中。
 源码仓库和 npm 包都不包含模型二进制。
 
 官方已经发布 ONNX 的模型，优先去 PaddlePaddle 的 Hugging Face 仓库下载；官方没有可用
-ONNX 的模型，可以从 [`paddleocr-js-onnx`](./paddleocr-js-onnx/README_zh.md) 下载本项目转换和验证过的版本。
+ONNX 的模型，可以从
+[`x3zvawq/paddleocr-js-onnx`](https://huggingface.co/x3zvawq/paddleocr-js-onnx)
+下载本项目转换和验证过的版本。
 
 runtime 不读取固定模型目录。你的应用只需要把 ONNX 模型读成 `ArrayBuffer`，把 OCR 字典、
 label 或公式 tokenizer 读成对应的数据结构，再传给 service 或模块 API。

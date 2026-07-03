@@ -47,7 +47,8 @@ Model binaries are not included in this source repository or the npm package.
 
 Download official ONNX models from PaddlePaddle's Hugging Face repositories when
 they exist. When official ONNX assets are not available, use the converted and
-locally verified assets from [`paddleocr-js-onnx`](./paddleocr-js-onnx/README.md).
+locally verified assets from
+[`x3zvawq/paddleocr-js-onnx`](https://huggingface.co/x3zvawq/paddleocr-js-onnx).
 
 The runtime does not read from a fixed model directory. Your application only
 needs to load ONNX models as `ArrayBuffer`s, load OCR dictionaries, labels, or
