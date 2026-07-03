@@ -1,0 +1,24 @@
+# Official PaddlePaddle ONNX assets are listed in the README and should be
+# downloaded from their upstream Hugging Face repositories, not mirrored here.
+ppocr_v6_tiny/*
+!ppocr_v6_tiny/ppocrv6_tiny_dict.txt
+
+ppocr_v6_small/*
+!ppocr_v6_small/ppocrv6_dict.txt
+
+pp_lcnet_x1_0_doc_ori/
+pp_lcnet_x0_25_textline_ori/
+pp_lcnet_x1_0_table_cls/
+uvdoc/
+pp_docblocklayout/
+pp_doclayout_plus_l/
+slanet/
+slanext_wired/
+slanext_wireless/
+rt_detr_wired_table_cell_det/
+rt_detr_wireless_table_cell_det/
+
+# Local upload noise.
+.DS_Store
+.cache/
+tmp/
