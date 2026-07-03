@@ -1,4 +1,4 @@
-import type { Box } from "../interface.ts";
+import type { Box, ImageChannelOrder, Point } from "../interface.ts";
 
 interface CropOptions {
     x: number;
@@ -10,7 +10,7 @@ interface CropOptions {
 interface ResizeOptions {
     width?: number;
     height?: number;
-    filter?: "triangle";
+    filter?: "bilinear" | "triangle";
 }
 
 interface PaddingOptions {
@@ -27,6 +27,7 @@ interface PaddingOptions {
 interface TensorOptions {
     mean_values: [number, number, number];
     norm_values: [number, number, number];
+    channel_order?: ImageChannelOrder;
 }
 
 interface DilateOptions {
@@ -96,6 +97,80 @@ export class Image {
         return new Image(width, height, this.channels, croppedData);
     }
 
+    cropRotated(points: [Point, Point, Point, Point]) {
+        const width = Math.max(
+            Math.floor(distance(points[0], points[1])),
+            Math.floor(distance(points[2], points[3])),
+            1
+        );
+        const height = Math.max(
+            Math.floor(distance(points[0], points[3])),
+            Math.floor(distance(points[1], points[2])),
+            1
+        );
+        const croppedData = new Uint8Array(width * height * this.channels);
+        const transform = getPerspectiveTransform(
+            [
+                { x: 0, y: 0 },
+                { x: width, y: 0 },
+                { x: width, y: height },
+                { x: 0, y: height },
+            ],
+            points
+        );
+
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const source = transformPoint(transform, x, y);
+                this.sampleCubicPixel(
+                    source.x,
+                    source.y,
+                    croppedData,
+                    (y * width + x) * this.channels
+                );
+            }
+        }
+
+        const crop = new Image(width, height, this.channels, croppedData);
+        if (height / width >= 1.5) {
+            return crop.rotateCounterClockwise();
+        }
+        return crop;
+    }
+
+    rotate180() {
+        const rotatedData = new Uint8Array(this.width * this.height * this.channels);
+        for (let y = 0; y < this.height; y++) {
+            for (let x = 0; x < this.width; x++) {
+                const srcIndex = (y * this.width + x) * this.channels;
+                const dstX = this.width - 1 - x;
+                const dstY = this.height - 1 - y;
+                const dstIndex = (dstY * this.width + dstX) * this.channels;
+                rotatedData.set(this.data.subarray(srcIndex, srcIndex + this.channels), dstIndex);
+            }
+        }
+
+        return new Image(this.width, this.height, this.channels, rotatedData);
+    }
+
+    rotateClockwise() {
+        const rotatedData = new Uint8Array(this.width * this.height * this.channels);
+        const rotatedWidth = this.height;
+        const rotatedHeight = this.width;
+
+        for (let y = 0; y < rotatedHeight; y++) {
+            for (let x = 0; x < rotatedWidth; x++) {
+                const srcX = y;
+                const srcY = this.height - 1 - x;
+                const srcIndex = (srcY * this.width + srcX) * this.channels;
+                const dstIndex = (y * rotatedWidth + x) * this.channels;
+                rotatedData.set(this.data.subarray(srcIndex, srcIndex + this.channels), dstIndex);
+            }
+        }
+
+        return new Image(rotatedWidth, rotatedHeight, this.channels, rotatedData);
+    }
+
     /**
      * 将图片缩放到指定的尺寸w
      * @param options
@@ -112,10 +187,84 @@ export class Image {
             height = Math.round(this.height * (width / this.width));
         }
 
+        if (!Number.isInteger(width) || width <= 0) {
+            throw new Error(`Invalid resize width: ${width}. Expected a positive integer.`);
+        }
+        if (!Number.isInteger(height) || height <= 0) {
+            throw new Error(`Invalid resize height: ${height}. Expected a positive integer.`);
+        }
+
+        if (options.filter === "triangle") {
+            return this.resizeTriangle(width, height);
+        }
+
+        return this.resizeBilinear(width, height);
+    }
+
+    private resizeBilinear(dstW: number, dstH: number) {
         const srcW = this.width;
         const srcH = this.height;
-        const dstW = width;
-        const dstH = height;
+        const channels = this.channels;
+        const srcData = this.data;
+        const dstData = new Uint8Array(dstW * dstH * channels);
+        const scaleX = srcW / dstW;
+        const scaleY = srcH / dstH;
+
+        const clamp = (v: number, min: number, max: number): number =>
+            Math.max(min, Math.min(max, v));
+
+        for (let y = 0; y < dstH; y++) {
+            const sourceY = (y + 0.5) * scaleY - 0.5;
+            let y1 = Math.floor(sourceY);
+            let yWeight = sourceY - y1;
+            if (y1 < 0) {
+                y1 = 0;
+                yWeight = 0;
+            } else if (y1 >= srcH - 1) {
+                y1 = srcH - 1;
+                yWeight = 0;
+            }
+            const y2 = clamp(y1 + 1, 0, srcH - 1);
+
+            for (let x = 0; x < dstW; x++) {
+                const sourceX = (x + 0.5) * scaleX - 0.5;
+                let x1 = Math.floor(sourceX);
+                let xWeight = sourceX - x1;
+                if (x1 < 0) {
+                    x1 = 0;
+                    xWeight = 0;
+                } else if (x1 >= srcW - 1) {
+                    x1 = srcW - 1;
+                    xWeight = 0;
+                }
+                const x2 = clamp(x1 + 1, 0, srcW - 1);
+
+                const dstIndex = (y * dstW + x) * channels;
+                const topLeftIndex = (y1 * srcW + x1) * channels;
+                const topRightIndex = (y1 * srcW + x2) * channels;
+                const bottomLeftIndex = (y2 * srcW + x1) * channels;
+                const bottomRightIndex = (y2 * srcW + x2) * channels;
+
+                for (let c = 0; c < channels; c++) {
+                    const top =
+                        srcData[topLeftIndex + c] * (1 - xWeight) +
+                        srcData[topRightIndex + c] * xWeight;
+                    const bottom =
+                        srcData[bottomLeftIndex + c] * (1 - xWeight) +
+                        srcData[bottomRightIndex + c] * xWeight;
+                    dstData[dstIndex + c] = Math.round(
+                        clamp(top * (1 - yWeight) + bottom * yWeight, 0, 255)
+                    );
+                }
+            }
+        }
+
+        return new Image(dstW, dstH, channels, dstData);
+    }
+
+    private resizeTriangle(dstW: number, dstH: number) {
+        const srcW = this.width;
+        const srcH = this.height;
         const channels = this.channels;
         const srcData = this.data;
 
@@ -217,26 +366,28 @@ export class Image {
         bottom = bottom ?? 0;
         left = left ?? 0;
         right = right ?? 0;
-        color = color ?? [0, 0, 0, 0];
+        color = color ?? Array(this.channels).fill(0);
+        if (color.length < this.channels) {
+            throw new Error(
+                `Color length ${color.length} does not match image channels ${this.channels}`
+            );
+        }
         const newW = this.width + left + right;
         const newH = this.height + top + bottom;
-        const newData = new Uint8Array(newW * newH * 4);
+        const newData = new Uint8Array(newW * newH * this.channels);
         // 填充背景色
         for (let y = 0; y < newH; y++) {
             for (let x = 0; x < newW; x++) {
-                const idx = (y * newW + x) * 4;
-                newData[idx] = color[0];
-                newData[idx + 1] = color[1];
-                newData[idx + 2] = color[2];
-                newData[idx + 3] = color[3];
+                const idx = (y * newW + x) * this.channels;
+                newData.set(color.slice(0, this.channels), idx);
             }
         }
         // 拷贝原图
         for (let y = 0; y < this.height; y++) {
             for (let x = 0; x < this.width; x++) {
-                const srcIdx = (y * this.width + x) * 4;
-                const dstIdx = ((y + top) * newW + (x + left)) * 4;
-                newData.set(this.data.subarray(srcIdx, srcIdx + 4), dstIdx);
+                const srcIdx = (y * this.width + x) * this.channels;
+                const dstIdx = ((y + top) * newW + (x + left)) * this.channels;
+                newData.set(this.data.subarray(srcIdx, srcIdx + this.channels), dstIdx);
             }
         }
         return new Image(newW, newH, this.channels, newData);
@@ -249,6 +400,7 @@ export class Image {
     tensor(options: TensorOptions): Float32Array {
         const mean = options.mean_values;
         const norm = options.norm_values;
+        const channelOrder = options.channel_order ?? "rgb";
         const width = this.width;
         const height = this.height;
         const numChannels = 3;
@@ -259,7 +411,8 @@ export class Image {
                 const pixelIndex = (h * width + w) * this.channels;
                 const tensorIndex = h * width + w;
                 for (let c = 0; c < numChannels; c++) {
-                    const pixelValue = rgbaData[pixelIndex + c];
+                    const sourceChannel = channelOrder === "bgr" ? numChannels - c - 1 : c;
+                    const pixelValue = rgbaData[pixelIndex + sourceChannel];
                     const normalizedValue = pixelValue * norm[c] - mean[c] * norm[c];
                     tensor[c * height * width + tensorIndex] = normalizedValue;
                 }
@@ -298,62 +451,39 @@ export class Image {
         if (this.channels !== 1) {
             throw new Error("Dilate only supports single channel (grayscale) images");
         }
+        if (!Number.isInteger(k) || k < 0) {
+            throw new Error(`Invalid dilation kernel size: ${k}. Expected a non-negative integer.`);
+        }
+        if (k <= 1) {
+            return new Image(this.width, this.height, this.channels, new Uint8Array(this.data));
+        }
         const width = this.width;
         const height = this.height;
         const src = this.data;
-        // 1. 计算每个像素到最近前景像素(255)的LInf距离
-        // 初始化距离图，前景为0，背景为无穷大
-        const INF = 999999;
-        const dist = new Uint16Array(width * height);
-        for (let i = 0; i < width * height; i++) {
-            dist[i] = src[i] > 0 ? 0 : INF;
-        }
-        // 两次扫描，先左上到右下，再右下到左上
-        // LInf: 只需看8邻域的最小距离+1
-        // 正向
+        const out = new Uint8Array(width * height);
+        const anchor = Math.floor(k / 2);
+
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
-                const idx = y * width + x;
-                if (dist[idx] === 0) continue;
-                let minDist = INF;
-                for (let dy = -1; dy <= 0; dy++) {
-                    for (let dx = -1; dx <= 1; dx++) {
-                        if (dx === 0 && dy === 0) continue;
-                        const nx = x + dx,
-                            ny = y + dy;
-                        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                            const nidx = ny * width + nx;
-                            minDist = Math.min(minDist, dist[nidx] + 1);
+                let value = 0;
+                for (let ky = 0; ky < k && value === 0; ky++) {
+                    const sourceY = y + ky - anchor;
+                    if (sourceY < 0 || sourceY >= height) {
+                        continue;
+                    }
+                    for (let kx = 0; kx < k; kx++) {
+                        const sourceX = x + kx - anchor;
+                        if (sourceX < 0 || sourceX >= width) {
+                            continue;
+                        }
+                        if (src[sourceY * width + sourceX] > 0) {
+                            value = 255;
+                            break;
                         }
                     }
                 }
-                dist[idx] = Math.min(dist[idx], minDist);
+                out[y * width + x] = value;
             }
-        }
-        // 反向
-        for (let y = height - 1; y >= 0; y--) {
-            for (let x = width - 1; x >= 0; x--) {
-                const idx = y * width + x;
-                if (dist[idx] === 0) continue;
-                let minDist = INF;
-                for (let dy = 0; dy <= 1; dy++) {
-                    for (let dx = -1; dx <= 1; dx++) {
-                        if (dx === 0 && dy === 0) continue;
-                        const nx = x + dx,
-                            ny = y + dy;
-                        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                            const nidx = ny * width + nx;
-                            minDist = Math.min(minDist, dist[nidx] + 1);
-                        }
-                    }
-                }
-                dist[idx] = Math.min(dist[idx], minDist);
-            }
-        }
-        // 2. 距离小于等于k的像素设为255，否则为0
-        const out = new Uint8Array(width * height);
-        for (let i = 0; i < width * height; i++) {
-            out[i] = dist[i] <= k ? 255 : 0;
         }
         return new Image(width, height, 1, out);
     }
@@ -385,14 +515,12 @@ export class Image {
                         maxX = x,
                         maxY = y,
                         area = 0;
-                    const queue = [[x, y]];
+                    const queue: Array<[number, number]> = [[x, y]];
+                    let queueHead = 0;
                     visited[at(x, y)] = 1;
-                    while (queue.length) {
-                        const current = queue.shift();
-                        if (!current) {
-                            break;
-                        }
-                        const [cx, cy] = current;
+                    while (queueHead < queue.length) {
+                        const [cx, cy] = queue[queueHead];
+                        queueHead++;
                         area++;
                         minX = Math.min(minX, cx);
                         minY = Math.min(minY, cy);
@@ -494,6 +622,44 @@ export class Image {
         }
     }
 
+    rotateCounterClockwise() {
+        const rotatedData = new Uint8Array(this.width * this.height * this.channels);
+        const rotatedWidth = this.height;
+        const rotatedHeight = this.width;
+
+        for (let y = 0; y < rotatedHeight; y++) {
+            for (let x = 0; x < rotatedWidth; x++) {
+                const srcX = this.width - 1 - y;
+                const srcY = x;
+                const srcIndex = (srcY * this.width + srcX) * this.channels;
+                const dstIndex = (y * rotatedWidth + x) * this.channels;
+                rotatedData.set(this.data.subarray(srcIndex, srcIndex + this.channels), dstIndex);
+            }
+        }
+
+        return new Image(rotatedWidth, rotatedHeight, this.channels, rotatedData);
+    }
+
+    private sampleCubicPixel(x: number, y: number, output: Uint8Array, outputIndex: number) {
+        const baseX = Math.floor(x);
+        const baseY = Math.floor(y);
+        const coeffX = cubicCoefficients(x - baseX);
+        const coeffY = cubicCoefficients(y - baseY);
+
+        for (let c = 0; c < this.channels; c++) {
+            let value = 0;
+            for (let ky = 0; ky < 4; ky++) {
+                const sampleY = clampInt(baseY + ky - 1, 0, this.height - 1);
+                for (let kx = 0; kx < 4; kx++) {
+                    const sampleX = clampInt(baseX + kx - 1, 0, this.width - 1);
+                    const pixel = this.data[(sampleY * this.width + sampleX) * this.channels + c];
+                    value += pixel * coeffX[kx] * coeffY[ky];
+                }
+            }
+            output[outputIndex + c] = Math.round(clamp(value, 0, 255));
+        }
+    }
+
     /**
      * 以png格式输出到指定位置
      * @param path 输出路径
@@ -515,4 +681,106 @@ export class Image {
     //         throw e;
     //     }
     // }
+}
+
+function distance(pointA: Point, pointB: Point) {
+    return Math.hypot(pointA.x - pointB.x, pointA.y - pointB.y);
+}
+
+function getPerspectiveTransform(
+    source: [Point, Point, Point, Point],
+    target: [Point, Point, Point, Point]
+): [number, number, number, number, number, number, number, number, number] {
+    const matrix: number[][] = [];
+    const values: number[] = [];
+    for (let i = 0; i < 4; i++) {
+        const src = source[i];
+        const dst = target[i];
+        matrix.push([src.x, src.y, 1, 0, 0, 0, -src.x * dst.x, -src.y * dst.x]);
+        values.push(dst.x);
+        matrix.push([0, 0, 0, src.x, src.y, 1, -src.x * dst.y, -src.y * dst.y]);
+        values.push(dst.y);
+    }
+
+    const coefficients = solveLinearSystem(matrix, values);
+    return [
+        coefficients[0],
+        coefficients[1],
+        coefficients[2],
+        coefficients[3],
+        coefficients[4],
+        coefficients[5],
+        coefficients[6],
+        coefficients[7],
+        1,
+    ];
+}
+
+function solveLinearSystem(matrix: number[][], values: number[]): number[] {
+    const size = values.length;
+    const augmented = matrix.map((row, index) => [...row, values[index]]);
+
+    for (let col = 0; col < size; col++) {
+        let pivot = col;
+        for (let row = col + 1; row < size; row++) {
+            if (Math.abs(augmented[row][col]) > Math.abs(augmented[pivot][col])) {
+                pivot = row;
+            }
+        }
+        if (Math.abs(augmented[pivot][col]) < Number.EPSILON) {
+            throw new Error("Cannot calculate perspective transform from degenerate points");
+        }
+        if (pivot !== col) {
+            [augmented[col], augmented[pivot]] = [augmented[pivot], augmented[col]];
+        }
+
+        const pivotValue = augmented[col][col];
+        for (let entry = col; entry <= size; entry++) {
+            augmented[col][entry] /= pivotValue;
+        }
+        for (let row = 0; row < size; row++) {
+            if (row === col) {
+                continue;
+            }
+            const factor = augmented[row][col];
+            for (let entry = col; entry <= size; entry++) {
+                augmented[row][entry] -= factor * augmented[col][entry];
+            }
+        }
+    }
+
+    return augmented.map((row) => row[size]);
+}
+
+function transformPoint(
+    matrix: [number, number, number, number, number, number, number, number, number],
+    x: number,
+    y: number
+): Point {
+    const denominator = matrix[6] * x + matrix[7] * y + matrix[8];
+    if (Math.abs(denominator) < Number.EPSILON) {
+        return { x: 0, y: 0 };
+    }
+    return {
+        x: (matrix[0] * x + matrix[1] * y + matrix[2]) / denominator,
+        y: (matrix[3] * x + matrix[4] * y + matrix[5]) / denominator,
+    };
+}
+
+function cubicCoefficients(x: number): [number, number, number, number] {
+    const a = -0.75;
+    const x1 = x + 1;
+    const x2 = 1 - x;
+    const coeff0 = ((a * x1 - 5 * a) * x1 + 8 * a) * x1 - 4 * a;
+    const coeff1 = ((a + 2) * x - (a + 3)) * x * x + 1;
+    const coeff2 = ((a + 2) * x2 - (a + 3)) * x2 * x2 + 1;
+    return [coeff0, coeff1, coeff2, 1 - coeff0 - coeff1 - coeff2];
+}
+
+function clamp(value: number, min: number, max: number) {
+    return Math.max(min, Math.min(max, value));
+}
+
+function clampInt(value: number, min: number, max: number) {
+    return Math.max(min, Math.min(max, value));
 }
