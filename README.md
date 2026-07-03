@@ -1,104 +1,150 @@
-# PaddleOcr
+# paddleocr.js
 
-[中文文档 (Chinese Documentation)](./README_zh.md)
+[中文文档](./README_zh.md)
 
-A lightweight, type-safe, dependency-free JavaScript/TypeScript library for PaddleOCR, supporting both Node.js and browser environments.
+A lightweight TypeScript runtime for PaddleOCR / PaddleX ONNX inference.
 
-## Features
+The library focuses on the inference chain: preprocessing, ONNX Runtime calls,
+postprocessing, presets, and high-level pipelines. It does not ship image decoders,
+OpenCV, pyclipper, or model binaries. Your application loads the pixels and model
+files, then passes them into this runtime.
 
-- **Cross-platform**: Works in Node.js, Bun, and browser environments.
-- **Type-safe**: Written in TypeScript with full type definitions.
-- **No dependencies**: Minimal footprint, no heavy image processing libraries included.
-- **Flexible model loading**: Accepts model files as ArrayBuffer, allowing custom loading strategies (e.g., fetch, fs.readFileSync).
-- **ONNX Runtime support**: Compatible with both `onnxruntime-web` and `onnxruntime-node`.
-- **Customizable dictionary**: Pass your own character dictionary for recognition.
-- **Modern API**: Simple, promise-based API for easy integration.
+## What It Supports
 
-## Installation
+| Area | User-facing API |
+| --- | --- |
+| OCR det + textline orientation + rec | `PaddleOcrService` |
+| Table Recognition V2 | `TableRecognitionV2Service` |
+| PP-Structure-like document parsing | `PaddleStructureService` |
+| Text detection / recognition modules | `DetectionService`, `RecognitionService` |
+| Document / textline / table classification | `ImageClassificationService` |
+| Layout / region / table-cell object detection | `ObjectDetectionService` |
+| Table structure recognition | `TableStructureRecognitionService` |
+| Formula recognition | `FormulaRecognitionService` |
+| Text image unwarping | `TextImageUnwarpingService` |
 
-```bash
-npm install paddleocr
-# or
-yarn add paddleocr
-# or
-pnpm add paddleocr
+Preset coverage includes PP-OCRv5 and PP-OCRv6 OCR models, document orientation,
+textline orientation, table classification, UVDoc, PP-DocBlockLayout,
+PP-DocLayout, SLANet, SLANeXt wired/wireless, RT-DETR table cell detectors, and
+PP-FormulaNet families.
+
+## Install
+
+Install the runtime plus the ONNX Runtime backend you want to use:
+
+```sh
+npm install paddleocr onnxruntime-node
+# or, for browser apps
+npm install paddleocr onnxruntime-web
 ```
 
-## Usage
+`onnxruntime-node` / `onnxruntime-web` are supplied by your application so the same
+runtime can work in Node.js, Bun, and browsers.
 
-### 1. Prepare ONNX Runtime and Model Files
+## Models
 
-- In browser:
-    ```js
-    import * as ort from "onnxruntime-web";
-    ```
-- In Node.js or Bun:
-    ```js
-    import * as ort from "onnxruntime-node";
-    ```
+Model binaries are not included in this source repository or the npm package.
 
-### 2. Load Model Files and Dictionary
+Download official ONNX models from PaddlePaddle's Hugging Face repositories when
+they exist. When official ONNX assets are not available, use the converted and
+locally verified assets from [`paddleocr-js-onnx`](./paddleocr-js-onnx/README.md).
 
-You can use `fetch`, `fs.readFileSync`, or any other method to load your ONNX model files and dictionary as ArrayBuffer and string array, respectively.
+The runtime does not read from a fixed model directory. Your application only
+needs to load ONNX models as `ArrayBuffer`s, load OCR dictionaries, labels, or
+formula tokenizers as data, then pass them to the service or module APIs.
 
-### 3. Initialize the Service
+## Quick OCR Example
 
-```js
+This example assumes your application has already decoded an image into
+`{ width, height, data }`, where `data` is grayscale, RGB, or RGBA pixels.
+
+```ts
+import { readFile } from "node:fs/promises";
+import * as ort from "onnxruntime-node";
 import { PaddleOcrService } from "paddleocr";
 
-const paddleOcrService = await PaddleOcrService.createInstance({
+function toArrayBuffer(buffer: Buffer): ArrayBuffer {
+    return buffer.buffer.slice(
+        buffer.byteOffset,
+        buffer.byteOffset + buffer.byteLength
+    ) as ArrayBuffer;
+}
+
+const [detModel, recModel, textlineModel, dictText] = await Promise.all([
+    readFile("paddleocr-js-onnx/ppocr_v6_small/PP-OCRv6_small_det_infer.onnx"),
+    readFile("paddleocr-js-onnx/ppocr_v6_small/PP-OCRv6_small_rec_infer.onnx"),
+    readFile(
+        "paddleocr-js-onnx/pp_lcnet_x0_25_textline_ori/PP-LCNet_x0_25_textline_ori_infer.onnx"
+    ),
+    readFile("paddleocr-js-onnx/ppocr_v6_small/ppocrv6_dict.txt", "utf-8"),
+]);
+
+const ocr = await PaddleOcrService.createInstance({
     ort,
+    modelPreset: "PP-OCRv6_small",
     detection: {
-        modelBuffer: detectOnnx,
-        minimumAreaThreshold: 24,
-        textPixelThreshold: 0.55,
-        paddingBoxVertical: 0.3,
-        paddingBoxHorizontal: 0.5,
+        modelBuffer: toArrayBuffer(detModel),
     },
     recognition: {
-        modelBuffer: recOnnx,
-        charactersDictionary: dict,
-        imageHeight: 48,
+        modelBuffer: toArrayBuffer(recModel),
+        charactersDictionary: dictText.trimEnd().split(/\r?\n/),
+    },
+    textlineOrientation: {
+        modelBuffer: toArrayBuffer(textlineModel),
+        threshold: 0.9,
     },
 });
-```
 
-The `detection` and `recognition` objects above act as instance defaults. They are applied to every `recognize()` call unless you override them per request.
-
-### 4. Prepare Image Data
-
-The `recognize` method expects an object with `width`, `height`, and `data` (Uint8Array of RGB(A) values). Use your preferred image decoding library (e.g., `fast-png`, `image-js`).
-
-```js
-import { decode } from "fast-png";
-const imageFile = await readFile("tests/image.png");
-const buffer = imageFile.buffer.slice(imageFile.byteOffset, imageFile.byteOffset + imageFile.byteLength);
-const image = decode(buffer);
-const input = {
-    data: image.data,
-    width: image.width,
-    height: image.height,
-};
-```
-
-### 5. Run OCR
-
-```js
-const result = await paddleOcrService.recognize(input);
-console.log(result);
-```
-
-### 6. Track Progress
-
-You can pass `onProgress` to `recognize` to receive detection and recognition updates in real time.
-
-```js
-const result = await paddleOcrService.recognize(input, {
+const results = await ocr.recognize(inputPixels, {
     onProgress(event) {
         console.log(event.type, event.stage, event.progress);
+    },
+});
 
+const text = ocr.processRecognition(results).text;
+console.log(text);
+```
+
+## Input Pixels
+
+Runtime APIs accept caller-owned pixels:
+
+```ts
+interface ImageInput {
+    width: number;
+    height: number;
+    data: Uint8Array;
+}
+```
+
+`data` may be grayscale, RGB, or RGBA. The runtime normalizes it to RGB and
+ignores alpha. Decode PNG/JPEG/PDF pages in your application with the library that
+fits your stack.
+
+## Examples
+
+See [`examples/README.md`](./examples/README.md) for runnable module and pipeline
+examples. The result images are generated from real ONNX inference and are meant
+to show what each module returns.
+
+| Pipeline | Result |
+| --- | --- |
+| OCR | ![OCR example](./examples/result/pipeline-ocr.png) |
+| Table Recognition V2 | ![Table Recognition V2 example](./examples/result/pipeline-table-recognition-v2.png) |
+| PP-Structure-like parsing | ![PP-Structure example](./examples/result/pipeline-pp-structure.png) |
+
+## Progress Events
+
+OCR services can report progress during detection and recognition:
+
+```ts
+await ocr.recognize(inputPixels, {
+    onProgress(event) {
+        if (event.type === "det") {
+            console.log(event.stage, event.detectedCount);
+        }
         if (event.type === "rec" && event.stage === "item") {
-            console.log("Partial result:", event.result?.text, event.box);
+            console.log(event.result?.text);
         }
     },
 });
@@ -106,78 +152,55 @@ const result = await paddleOcrService.recognize(input, {
 
 Event contract:
 
-- `det` emits `preprocess`, `infer`, and `postprocess` with fixed progress `1/3`, `2/3`, `3/3`
-- `rec` emits `start`, one `item` per detected text box, then `complete`
-- `rec/item` includes the current `result` and `box`
-- `det/postprocess` includes `detectedCount`
+- `det`: `preprocess`, `infer`, `postprocess`
+- `rec`: `start`, one `item` per detected text box, `complete`
+- `rec/item`: includes `result` and `box`
+- `det/postprocess`: includes `detectedCount`
 
-### 7. Tune Detection, Recognition, and Ordering
+## Presets and Overrides
 
-You can set defaults when creating the instance, then override them for a single image.
+The high-level OCR preset names are:
 
-```js
-const strictResult = await paddleOcrService.recognize(invoiceInput, {
+`PP-OCRv5`, `PP-OCRv5_mobile`, `PP-OCRv5_server`, `PP-OCRv6`,
+`PP-OCRv6_tiny`, `PP-OCRv6_small`, `PP-OCRv6_medium`.
+
+Presets configure channel order, resize behavior, normalization, DB
+postprocessing, and CTC output handling. You can still override detection,
+recognition, ordering, and textline orientation options per call.
+
+```ts
+const strictResults = await ocr.recognize(inputPixels, {
     detection: {
-        minimumAreaThreshold: 40,
-        textPixelThreshold: 0.65,
-        paddingBoxVertical: 0,
-        paddingBoxHorizontal: 0,
-        dilationKernelSize: 3,
-    },
-    recognition: {
-        imageHeight: 64,
-        charactersDictionary: digitsOnlyDict,
+        textPixelThreshold: 0.3,
+        boxScoreThreshold: 0.6,
+        unclipRatio: 1.5,
+        limitType: "max",
+        maxSideLimit: 4000,
     },
     ordering: {
         sortByReadingOrder: true,
         sameLineThresholdRatio: 0.15,
     },
 });
-
-const looseResult = await paddleOcrService.recognize(noteInput, {
-    detection: {
-        minimumAreaThreshold: 8,
-        textPixelThreshold: 0.45,
-    },
-});
 ```
 
-Supported per-call override groups:
+## Parity Notes
 
-- `detection`: `padding`, `mean`, `stdDeviation`, `maxSideLength`, `paddingBoxVertical`, `paddingBoxHorizontal`, `minimumAreaThreshold`, `textPixelThreshold`, `dilationKernelSize`
-- `recognition`: `imageHeight`, `mean`, `stdDeviation`, `charactersDictionary`
-- `ordering`: `sortByReadingOrder`, `sameLineThresholdRatio`
+The runtime follows official PaddleOCR / PaddleX preprocessing and
+postprocessing at a high level, including OCR resize strategies, DB
+postprocess, CTC decode, textline orientation correction, layout/object NMS,
+table structure decoding, formula token decoding, and UVDoc output decoding.
 
-`charactersDictionary` can be provided either when creating the instance or per call. If neither is provided, `recognize()` throws.
+Some operations are intentionally lightweight approximations instead of
+bit-exact OpenCV/pyclipper clones. For example, rotated OCR crops use a
+TypeScript perspective sampler, and table span recovery is a high-level
+TypeScript implementation. These choices keep the runtime small and portable.
 
-### 8. Control Line Merging in `processRecognition`
+## Browser Notes
 
-```js
-const rawRecognition = await paddleOcrService.recognize(input);
-const processed = paddleOcrService.processRecognition(rawRecognition, {
-    lineMergeThresholdRatio: 0.8,
-});
-
-console.log(processed.text);
-console.log(processed.lines);
-```
-
-## Model Files
-
-You can find sample models in the `assets/` directory:
-
-- `PP-OCRv5_mobile_det_infer.onnx`
-- `PP-OCRv5_mobile_rec_infer.onnx`
-- `ppocrv5_dict.txt`
-
-## Examples
-
-See the `examples/` directory for usage samples.
-About browser usage with Vite, check out [paddleocr-vite-example](https://github.com/X3ZvaWQ/paddleocr-vite-example)
-
-## Contributing
-
-Contributions are welcome! Feel free to submit a PR or open an issue.
+Browser applications usually load ONNX files with `fetch()` and pass
+`ArrayBuffer`s into `createInstance()`. A Vite example lives at
+[paddleocr-vite-example](https://github.com/X3ZvaWQ/paddleocr-vite-example).
 
 ## License
 

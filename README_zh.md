@@ -1,104 +1,145 @@
-# Paddleocr 中文文档
+# paddleocr.js
 
 [English Documentation](./README.md)
 
-一个轻量级、类型安全、无依赖的 PaddleOCR JavaScript/TypeScript 库，同时支持 Node.js 与浏览器环境。
+一个轻量 TypeScript PaddleOCR / PaddleX ONNX 推理运行时。
 
-## 特性
+这个库负责推理链路本身：预处理、ONNX Runtime 调用、后处理、模型 preset
+以及高级 pipeline。它不内置 PNG/JPEG 解码、不内置 OpenCV、不内置 pyclipper，
+也不随 npm 包发布模型二进制。你的应用负责加载图片像素和模型文件，然后把它们传给
+这个 runtime。
 
-- **跨平台**：支持 Node.js、Bun 和浏览器环境。
-- **类型安全**：TypeScript 编写，完整类型定义。
-- **零依赖**：极小体积，无额外图片处理库。
-- **灵活模型加载**：模型文件以 ArrayBuffer 传入，支持自定义加载方式（如 fetch、fs.readFileSync）。
-- **ONNX Runtime 支持**：兼容 `onnxruntime-web` 和 `onnxruntime-node`。
-- **可自定义字典**：可传入自定义字符字典。
-- **现代 API**：Promise 风格，易于集成。
+## 支持能力
+
+| 能力 | 用户 API |
+| --- | --- |
+| OCR det + 文本行方向 + rec | `PaddleOcrService` |
+| 表格识别 Table Recognition V2 | `TableRecognitionV2Service` |
+| 类 PP-Structure 文档解析 | `PaddleStructureService` |
+| 文本检测 / 文本识别模块 | `DetectionService`, `RecognitionService` |
+| 文档方向 / 文本行方向 / 表格分类 | `ImageClassificationService` |
+| 版面 / 区域 / 表格单元格检测 | `ObjectDetectionService` |
+| 表格结构识别 | `TableStructureRecognitionService` |
+| 公式识别 | `FormulaRecognitionService` |
+| 文本图像矫正 | `TextImageUnwarpingService` |
+
+当前 preset 覆盖 PP-OCRv5、PP-OCRv6、文档方向分类、文本行方向分类、表格分类、
+UVDoc、PP-DocBlockLayout、PP-DocLayout、SLANet、SLANeXt 有线/无线表格、
+RT-DETR 表格单元格检测以及 PP-FormulaNet 系列。
 
 ## 安装
 
-```bash
-npm install paddleocr
-# 或
-yarn add paddleocr
-# 或
-pnpm add paddleocr
+安装 runtime，并按运行环境选择 ONNX Runtime 后端：
+
+```sh
+npm install paddleocr onnxruntime-node
+# 浏览器项目使用
+npm install paddleocr onnxruntime-web
 ```
 
-## 使用方法
+`onnxruntime-node` / `onnxruntime-web` 由你的应用提供，所以同一套 runtime 可以跑在
+Node.js、Bun 和浏览器中。
 
-### 1. 准备 ONNX Runtime 和模型文件
+## 模型文件
 
-- 浏览器环境：
-    ```js
-    import * as ort from "onnxruntime-web";
-    ```
-- Node.js 或 Bun 环境：
-    ```js
-    import * as ort from "onnxruntime-node";
-    ```
+源码仓库和 npm 包都不包含模型二进制。
 
-### 2. 加载模型文件和字典
+官方已经发布 ONNX 的模型，优先去 PaddlePaddle 的 Hugging Face 仓库下载；官方没有可用
+ONNX 的模型，可以从 [`paddleocr-js-onnx`](./paddleocr-js-onnx/README_zh.md) 下载本项目转换和验证过的版本。
 
-可用 `fetch`、`fs.readFileSync` 等方式加载 ONNX 模型文件（ArrayBuffer）和字典（字符串数组）。
+runtime 不读取固定模型目录。你的应用只需要把 ONNX 模型读成 `ArrayBuffer`，把 OCR 字典、
+label 或公式 tokenizer 读成对应的数据结构，再传给 service 或模块 API。
 
-### 3. 初始化服务
+## 最小 OCR 示例
 
-```js
+下面的例子假设你的应用已经把图片解码成 `{ width, height, data }`，其中 `data`
+可以是灰度、RGB 或 RGBA 像素。
+
+```ts
+import { readFile } from "node:fs/promises";
+import * as ort from "onnxruntime-node";
 import { PaddleOcrService } from "paddleocr";
 
-const paddleOcrService = await PaddleOcrService.createInstance({
+function toArrayBuffer(buffer: Buffer): ArrayBuffer {
+    return buffer.buffer.slice(
+        buffer.byteOffset,
+        buffer.byteOffset + buffer.byteLength
+    ) as ArrayBuffer;
+}
+
+const [detModel, recModel, textlineModel, dictText] = await Promise.all([
+    readFile("paddleocr-js-onnx/ppocr_v6_small/PP-OCRv6_small_det_infer.onnx"),
+    readFile("paddleocr-js-onnx/ppocr_v6_small/PP-OCRv6_small_rec_infer.onnx"),
+    readFile(
+        "paddleocr-js-onnx/pp_lcnet_x0_25_textline_ori/PP-LCNet_x0_25_textline_ori_infer.onnx"
+    ),
+    readFile("paddleocr-js-onnx/ppocr_v6_small/ppocrv6_dict.txt", "utf-8"),
+]);
+
+const ocr = await PaddleOcrService.createInstance({
     ort,
+    modelPreset: "PP-OCRv6_small",
     detection: {
-        modelBuffer: detectOnnx,
-        minimumAreaThreshold: 24,
-        textPixelThreshold: 0.55,
-        paddingBoxVertical: 0.3,
-        paddingBoxHorizontal: 0.5,
+        modelBuffer: toArrayBuffer(detModel),
     },
     recognition: {
-        modelBuffer: recOnnx,
-        charactersDictionary: dict,
-        imageHeight: 48,
+        modelBuffer: toArrayBuffer(recModel),
+        charactersDictionary: dictText.trimEnd().split(/\r?\n/),
+    },
+    textlineOrientation: {
+        modelBuffer: toArrayBuffer(textlineModel),
+        threshold: 0.9,
     },
 });
-```
 
-上面的 `detection` 和 `recognition` 配置会作为实例级默认值，后续每次 `recognize()` 都会继承，除非你在单次调用里覆盖它们。
-
-### 4. 准备图片数据
-
-`recognize` 方法需要传入包含 `width`、`height`、`data`（Uint8Array，RGB(A)）的对象。推荐使用 `fast-png`、`image-js` 等库进行图片解码。
-
-```js
-import { decode } from "fast-png";
-const imageFile = await readFile("tests/image.png");
-const buffer = imageFile.buffer.slice(imageFile.byteOffset, imageFile.byteOffset + imageFile.byteLength);
-const image = decode(buffer);
-const input = {
-    data: image.data,
-    width: image.width,
-    height: image.height,
-};
-```
-
-### 5. 识别文字
-
-```js
-const result = await paddleOcrService.recognize(input);
-console.log(result);
-```
-
-### 6. 获取实时进度
-
-可以在 `recognize` 的第二个参数里传入 `onProgress`，实时接收检测和识别阶段的事件。
-
-```js
-const result = await paddleOcrService.recognize(input, {
+const results = await ocr.recognize(inputPixels, {
     onProgress(event) {
         console.log(event.type, event.stage, event.progress);
+    },
+});
 
+const text = ocr.processRecognition(results).text;
+console.log(text);
+```
+
+## 图片输入
+
+所有 runtime API 都接收调用方传入的像素：
+
+```ts
+interface ImageInput {
+    width: number;
+    height: number;
+    data: Uint8Array;
+}
+```
+
+`data` 可以是灰度、RGB 或 RGBA。runtime 会统一转为 RGB，并忽略 alpha 通道。
+PNG、JPEG、PDF 页面等解码逻辑请放在你的应用侧，用你项目里合适的库处理。
+
+## 示例
+
+可运行的模块和流水线示例见 [`examples/README_zh.md`](./examples/README_zh.md)。
+里面的 result 图都来自真实 ONNX 推理，方便你判断每个模块会返回什么。
+
+| 流水线 | 效果图 |
+| --- | --- |
+| OCR | ![OCR 示例](./examples/result/pipeline-ocr.png) |
+| Table Recognition V2 | ![Table Recognition V2 示例](./examples/result/pipeline-table-recognition-v2.png) |
+| 类 PP-Structure 文档解析 | ![PP-Structure 示例](./examples/result/pipeline-pp-structure.png) |
+
+## 进度事件
+
+OCR 服务可以在检测和识别过程中回调进度：
+
+```ts
+await ocr.recognize(inputPixels, {
+    onProgress(event) {
+        if (event.type === "det") {
+            console.log(event.stage, event.detectedCount);
+        }
         if (event.type === "rec" && event.stage === "item") {
-            console.log("部分结果:", event.result?.text, event.box);
+            console.log(event.result?.text);
         }
     },
 });
@@ -106,78 +147,51 @@ const result = await paddleOcrService.recognize(input, {
 
 事件约定：
 
-- `det` 会依次发出 `preprocess`、`infer`、`postprocess`，对应固定进度 `1/3`、`2/3`、`3/3`
-- `rec` 会先发 `start`，然后每个文本框完成时发一次 `item`，最后发 `complete`
-- `rec/item` 会带上当前 `result` 和 `box`
-- `det/postprocess` 会额外带上 `detectedCount`
+- `det`：`preprocess`、`infer`、`postprocess`
+- `rec`：`start`、每个文本框一次 `item`、最后 `complete`
+- `rec/item`：包含当前 `result` 和 `box`
+- `det/postprocess`：包含 `detectedCount`
 
-### 7. 调整 Detection、Recognition 和排序参数
+## Preset 与覆盖参数
 
-你可以先在实例上设置默认值，再针对单张图片覆盖参数。
+高级 OCR preset 名称：
 
-```js
-const strictResult = await paddleOcrService.recognize(invoiceInput, {
+`PP-OCRv5`、`PP-OCRv5_mobile`、`PP-OCRv5_server`、`PP-OCRv6`、
+`PP-OCRv6_tiny`、`PP-OCRv6_small`、`PP-OCRv6_medium`。
+
+preset 会配置通道顺序、resize、normalize、DB 后处理和 CTC 输出处理。你仍然可以在单次调用中覆盖
+detection、recognition、ordering 和 textline orientation 参数。
+
+```ts
+const strictResults = await ocr.recognize(inputPixels, {
     detection: {
-        minimumAreaThreshold: 40,
-        textPixelThreshold: 0.65,
-        paddingBoxVertical: 0,
-        paddingBoxHorizontal: 0,
-        dilationKernelSize: 3,
-    },
-    recognition: {
-        imageHeight: 64,
-        charactersDictionary: digitsOnlyDict,
+        textPixelThreshold: 0.3,
+        boxScoreThreshold: 0.6,
+        unclipRatio: 1.5,
+        limitType: "max",
+        maxSideLimit: 4000,
     },
     ordering: {
         sortByReadingOrder: true,
         sameLineThresholdRatio: 0.15,
     },
 });
-
-const looseResult = await paddleOcrService.recognize(noteInput, {
-    detection: {
-        minimumAreaThreshold: 8,
-        textPixelThreshold: 0.45,
-    },
-});
 ```
 
-支持的单次调用覆盖项：
+## 与官方实现的边界
 
-- `detection`: `padding`、`mean`、`stdDeviation`、`maxSideLength`、`paddingBoxVertical`、`paddingBoxHorizontal`、`minimumAreaThreshold`、`textPixelThreshold`、`dilationKernelSize`
-- `recognition`: `imageHeight`、`mean`、`stdDeviation`、`charactersDictionary`
-- `ordering`: `sortByReadingOrder`、`sameLineThresholdRatio`
+runtime 在高层尽量贴合官方 PaddleOCR / PaddleX 的预处理和后处理，包括 OCR resize
+策略、DB 后处理、CTC decode、文本行方向修正、layout/object NMS、表格结构解码、
+公式 token 解码和 UVDoc 输出解码。
 
-`charactersDictionary` 可以在实例初始化时提供，也可以在单次 `recognize()` 调用时提供。如果两边都没传，`recognize()` 会直接抛错。
+部分步骤是轻量等价实现，不追求和 OpenCV / pyclipper bit-exact。例如 OCR 旋转裁剪使用
+TypeScript 透视采样，表格 span recovery 也是轻量 TypeScript 高层等价实现。这样可以保持
+runtime 小而且跨平台。
 
-### 8. 在 `processRecognition` 中控制分行阈值
+## 浏览器说明
 
-```js
-const rawRecognition = await paddleOcrService.recognize(input);
-const processed = paddleOcrService.processRecognition(rawRecognition, {
-    lineMergeThresholdRatio: 0.8,
-});
-
-console.log(processed.text);
-console.log(processed.lines);
-```
-
-## 模型文件
-
-示例模型见github仓库的 `assets/` 目录：
-
-- `PP-OCRv5_mobile_det_infer.onnx`
-- `PP-OCRv5_mobile_rec_infer.onnx`
-- `ppocrv5_dict.txt`
-
-## 示例
-
-更多用法见 `examples/` 目录。
-关于浏览器vite用法，见[paddleocr-example](https://github.com/X3ZvaWQ/paddleocr-vite-example)
-
-## 贡献
-
-欢迎提交 PR 或 Issue！
+浏览器项目通常用 `fetch()` 加载 ONNX 文件，把 `ArrayBuffer` 传给 `createInstance()`。
+Vite 示例见 [paddleocr-vite-example](https://github.com/X3ZvaWQ/paddleocr-vite-example)。
 
 ## 许可证
 
