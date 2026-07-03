@@ -4,3 +4,4 @@ node_modules
 .rollup.cache
 tsconfig.tsbuildinfo
 .eslintcache
+paddleocr-js-onnx

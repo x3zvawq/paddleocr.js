@@ -7,7 +7,7 @@
     },
     "files": {
         "ignoreUnknown": true,
-        "includes": ["**", "!dist", "!tests/.build", "!tests/output"]
+        "includes": ["**", "!dist", "!tests/.build", "!tests/output", "!assets/**/*.json"]
     },
     "formatter": {
         "enabled": true,

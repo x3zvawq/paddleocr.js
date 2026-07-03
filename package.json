@@ -32,19 +32,17 @@
         "start": "tsdown --watch",
         "build": "tsdown",
         "test": "bun test",
-        "test:node": "node --experimental-strip-types --test test/progress.test.ts",
         "lint": "biome check .",
         "lint:fix": "biome check --write .",
         "format": "biome format --write ."
     },
     "devDependencies": {
         "@biomejs/biome": "^2.4.7",
-        "@types/node": "^24.0.7",
+        "@types/node": "^24.13.2",
         "fast-png": "^7.0.0",
         "onnxruntime-node": "1.22.0-rev",
         "onnxruntime-web": "^1.22.0",
-        "typescript": "^5.9.3",
-        "tsdown": "^0.21.2"
-    },
-    "dependencies": {}
+        "tsdown": "^0.21.2",
+        "typescript": "^5.9.3"
+    }
 }

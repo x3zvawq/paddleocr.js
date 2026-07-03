@@ -4,3 +4,6 @@ node_modules
 tsconfig.tsbuildinfo
 .eslintcache
 .DS_Store
+tmp/
+assets/local/
+paddleocr-js-onnx

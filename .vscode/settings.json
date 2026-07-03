@@ -15,8 +15,7 @@
         "thresholded",
         "timestep"
     ],
-    "typescript.tsdk": "node_modules/typescript/lib",
-    "typescript.enablePromptUseWorkspaceTsdk": true,
+    "js/ts.tsdk.path": "node_modules/typescript/lib",
     "editor.formatOnSave": true,
     "editor.codeActionsOnSave": {
         "source.fixAll.biome": "explicit",
