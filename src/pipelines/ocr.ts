@@ -4,7 +4,9 @@ import {
     DEFAULT_PROCESS_RECOGNITION_OPTIONS,
     DEFAULT_RECOGNITION_OPTIONS,
     DEFAULT_RECOGNITION_ORDERING_OPTIONS,
+    DEFAULT_TEXTLINE_ORIENTATION_OPTIONS,
 } from "../constants.ts";
+import { normalizeInputToRgb } from "../core/input.ts";
 import type {
     DetectionRuntimeOptions,
     ImageInput,
@@ -14,10 +16,12 @@ import type {
     RecognitionOptions,
     RecognitionOrderingOptions,
     RecognitionRuntimeOptions,
+    TextLineOrientationRuntimeOptions,
 } from "../interface.ts";
-import { Image } from "../utils/image.ts";
-import { DetectionService } from "./detection.ts";
-import { type RecognitionResult, RecognitionService } from "./recognition.ts";
+import { ImageClassificationService } from "../modules/image-classification/service.ts";
+import { DetectionService } from "../modules/text-detection/service.ts";
+import { type RecognitionResult, RecognitionService } from "../modules/text-recognition/service.ts";
+import { getModelPreset, getModelPresetOptions } from "./ocr-preset.ts";
 
 export interface PaddleOcrResult {
     text: string;
@@ -46,6 +50,9 @@ export class PaddleOcrService {
     recognitionSession: OrtInferenceSession | null = null;
     recognitionService: RecognitionService | null = null;
 
+    textlineOrientationSession: OrtInferenceSession | null = null;
+    textlineOrientationService: ImageClassificationService | null = null;
+
     /**
      * Create a new PaddleOcrService instance
      * @param options Optional configuration options
@@ -56,9 +63,27 @@ export class PaddleOcrService {
                 "PaddleOcrService requires the 'ort' option to be set with onnxruntime-node or onnxruntime-wen."
             );
         }
+        const presetOptions = getModelPresetOptions(options.modelPreset);
         this.options = {
             ...DEFAULT_PADDLE_OPTIONS,
+            ...presetOptions,
             ...(options || {}),
+            detection: {
+                ...DEFAULT_PADDLE_OPTIONS.detection,
+                ...presetOptions.detection,
+                ...options.detection,
+            },
+            recognition: {
+                ...DEFAULT_PADDLE_OPTIONS.recognition,
+                ...presetOptions.recognition,
+                ...options.recognition,
+            },
+            textlineOrientation: options.textlineOrientation
+                ? {
+                      ...DEFAULT_TEXTLINE_ORIENTATION_OPTIONS,
+                      ...options.textlineOrientation,
+                  }
+                : undefined,
         };
     }
 
@@ -100,6 +125,24 @@ export class PaddleOcrService {
             this.recognitionSession,
             recognitionOptions
         );
+
+        const textlineOrientationModelBuffer = this.options.textlineOrientation?.modelBuffer;
+        if (textlineOrientationModelBuffer) {
+            this.textlineOrientationSession = await ort.InferenceSession.create(
+                textlineOrientationModelBuffer
+            );
+            const {
+                modelBuffer: _textlineOrientationModelBuffer,
+                enabled: _enabled,
+                threshold: _threshold,
+                ...textlineOrientationOptions
+            } = this.options.textlineOrientation ?? {};
+            this.textlineOrientationService = new ImageClassificationService(
+                ort,
+                this.textlineOrientationSession,
+                textlineOrientationOptions
+            );
+        }
     }
 
     /**
@@ -154,6 +197,27 @@ export class PaddleOcrService {
         };
     }
 
+    private resolveTextlineOrientationOptions(
+        options?: Partial<TextLineOrientationRuntimeOptions>
+    ): TextLineOrientationRuntimeOptions | undefined {
+        if (!this.options.textlineOrientation && !options) {
+            return undefined;
+        }
+
+        const { modelBuffer: _textlineOrientationModelBuffer, ...instanceOptions } =
+            this.options.textlineOrientation ?? {};
+        return {
+            ...DEFAULT_TEXTLINE_ORIENTATION_OPTIONS,
+            ...instanceOptions,
+            ...options,
+        };
+    }
+
+    private formatDictionaryRequirement(preset: ReturnType<typeof getModelPreset>): string {
+        const { dictionary } = preset;
+        return ` The ${preset.name} preset expects ${dictionary.fileName} with ${dictionary.dictionaryLength} entries and ${dictionary.recognitionOutputClasses} CTC output classes.`;
+    }
+
     /**
      * Runs object detection on the provided image input, then performs
      * recognition on the detected regions.
@@ -169,41 +233,53 @@ export class PaddleOcrService {
         if (!this.detectionService || !this.recognitionService) {
             throw new Error("PaddleOcrService is not initialized. Please call initialize() first.");
         }
-        const channels = input.data.length / (input.width * input.height);
-        if (!Number.isInteger(channels) || channels < 1 || channels > 4) {
-            throw new Error(
-                `Invalid input data: ${input.data} for image size ${input.width}x${input.height}. Expected 1, 3, or 4 channels.`
-            );
-        }
         const detectionRuntimeOptions = this.resolveDetectionRuntimeOptions(options?.detection);
         const recognitionRuntimeOptions = this.resolveRecognitionRuntimeOptions(
             options?.recognition
         );
         const orderingOptions = this.resolveRecognitionOrderingOptions(options?.ordering);
-        if (!recognitionRuntimeOptions.charactersDictionary?.length) {
+        const textlineOrientationOptions = this.resolveTextlineOrientationOptions(
+            options?.textlineOrientation
+        );
+        if (textlineOrientationOptions?.enabled && !this.textlineOrientationService) {
             throw new Error(
-                "Recognition charactersDictionary is required. Provide it in createInstance({ recognition }) or recognize(_, { recognition })."
+                "Textline orientation correction requires textlineOrientation.modelBuffer in createInstance()."
             );
         }
-        let image = new Image(input.width, input.height, channels, input.data);
+        if (!recognitionRuntimeOptions.charactersDictionary?.length) {
+            const preset = this.options.modelPreset
+                ? getModelPreset(this.options.modelPreset)
+                : undefined;
+            throw new Error(
+                `Recognition charactersDictionary is required. Provide it in createInstance({ recognition }) or recognize(_, { recognition }).${preset ? this.formatDictionaryRequirement(preset) : ""}`
+            );
+        }
+        let image = normalizeInputToRgb(input);
 
         const padding = detectionRuntimeOptions.padding;
         if (padding) {
             image = image.padding({
                 padding,
-                color: [255, 255, 255, 255],
+                color: [255, 255, 255],
             });
         }
         const detection = await this.detectionService.run(image, {
             ...detectionRuntimeOptions,
             onProgress: options?.onProgress,
         });
-        const recognition = await this.recognitionService.run(image, detection, {
+        const recognitionOptions: RecognitionOptions = {
             ...options,
             detection: detectionRuntimeOptions,
             recognition: recognitionRuntimeOptions,
             ordering: orderingOptions,
-        });
+        };
+        if (textlineOrientationOptions) {
+            recognitionOptions.textlineOrientation = textlineOrientationOptions;
+        }
+        if (this.textlineOrientationService) {
+            recognitionOptions.textlineOrientationClassifier = this.textlineOrientationService;
+        }
+        const recognition = await this.recognitionService.run(image, detection, recognitionOptions);
 
         return recognition;
     }
@@ -222,25 +298,32 @@ export class PaddleOcrService {
             confidence: 0,
         };
 
-        if (!recognition.length) {
-            return result;
-        }
-
-        // Calculate overall confidence as the average of all individual confidences
-        const totalConfidence = recognition.reduce((sum, r) => sum + r.confidence, 0);
-        result.confidence = totalConfidence / recognition.length;
         const processOptions = {
             ...DEFAULT_PROCESS_RECOGNITION_OPTIONS,
             ...options,
         };
+        const recognitionScoreThreshold =
+            processOptions.recognitionScoreThreshold ??
+            DEFAULT_PROCESS_RECOGNITION_OPTIONS.recognitionScoreThreshold;
+        const filteredRecognition = recognition.filter(
+            (item) => item.confidence >= recognitionScoreThreshold
+        );
 
-        let currentLine: RecognitionResult[] = [recognition[0]];
-        let fullText = recognition[0].text;
-        let avgHeight = recognition[0].box.height;
+        if (!filteredRecognition.length) {
+            return result;
+        }
 
-        for (let i = 1; i < recognition.length; i++) {
-            const current = recognition[i];
-            const previous = recognition[i - 1];
+        // Calculate overall confidence as the average of all individual confidences
+        const totalConfidence = filteredRecognition.reduce((sum, r) => sum + r.confidence, 0);
+        result.confidence = totalConfidence / filteredRecognition.length;
+
+        let currentLine: RecognitionResult[] = [filteredRecognition[0]];
+        let fullText = filteredRecognition[0].text;
+        let avgHeight = filteredRecognition[0].box.height;
+
+        for (let i = 1; i < filteredRecognition.length; i++) {
+            const current = filteredRecognition[i];
+            const previous = filteredRecognition[i - 1];
 
             const verticalGap = Math.abs(current.box.y - previous.box.y);
             const threshold = avgHeight * processOptions.lineMergeThresholdRatio;
