@@ -113,6 +113,12 @@ class count requires exactly one more entry. Already prepared dictionaries are
 accepted unchanged; other length mismatches and empty character entries throw.
 Without a preset, set `recognition.useSpaceChar: true` for models that use this rule.
 
+All three pipeline services expose `destroy()`. Await pending work before calling it;
+repeated calls share the same cleanup. Factory-created models are released together,
+including textline orientation and nested OCR services. Failed initialization releases
+models already created. Services supplied to pipeline constructors remain caller-owned;
+release their ONNX sessions yourself. A destroyed pipeline cannot be reused.
+
 ## Input Pixels
 
 Runtime APIs accept caller-owned pixels:

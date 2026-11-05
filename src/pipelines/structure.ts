@@ -1,5 +1,6 @@
 import type { Image } from "../core/image.ts";
 import { normalizeInputToRgb } from "../core/input.ts";
+import { SessionResources } from "../core/session-resources.ts";
 import type {
     Box,
     DetectionRuntimeOptions,
@@ -339,6 +340,7 @@ const STYLE_TOKENS = [
 ];
 
 export class PaddleStructureService {
+    private resources = new SessionResources();
     private readonly services: PaddleStructureServices;
     private readonly options: PaddleStructureRunOptions;
 
@@ -356,92 +358,117 @@ export class PaddleStructureService {
             );
         }
 
-        const services: PaddleStructureServices = {};
-        if (options.documentOrientation?.modelBuffer) {
-            services.documentOrientation = await createImageClassificationService(
-                options.ort,
-                options.documentOrientation,
-                "PP-LCNet_x1_0_doc_ori"
-            );
-        }
-        if (options.textImageUnwarping?.modelBuffer) {
-            services.textImageUnwarping = await createTextImageUnwarpingService(
-                options.ort,
-                options.textImageUnwarping,
-                "UVDoc"
-            );
-        }
-        if (options.regionDetection?.modelBuffer) {
-            services.regionDetection = await createObjectDetectionService(
-                options.ort,
-                options.regionDetection,
-                "PP-DocBlockLayout"
-            );
-        }
-        if (options.layout?.modelBuffer) {
-            services.layout = await createObjectDetectionService(
-                options.ort,
-                options.layout,
-                "PP-DocLayout_plus-L"
-            );
-        }
-        if (options.ocr?.detection?.modelBuffer || options.ocr?.recognition?.modelBuffer) {
-            services.ocr = await PaddleOcrService.createInstance({
-                ...options.ocr,
-                ort: options.ort,
-            });
-        }
-        if (
-            options.tableOcr?.detection?.modelBuffer ||
-            options.tableOcr?.recognition?.modelBuffer
-        ) {
-            services.tableOcr = await PaddleOcrService.createInstance({
-                ...options.tableOcr,
-                ort: options.ort,
-            });
-        }
-        if (options.tableStructure?.modelBuffer) {
-            services.tableStructure = await createTableStructureService(
-                options.ort,
-                options.tableStructure,
-                "SLANet"
-            );
-        }
-        if (options.formulaRecognition?.modelBuffer) {
-            services.formulaRecognition = await createFormulaRecognitionService(
-                options.ort,
-                options.formulaRecognition,
-                "PP-FormulaNet_plus-M"
-            );
-        }
-        if (options.sealTextDetection?.modelBuffer) {
-            services.sealTextDetection = await createTextDetectionService(
-                options.ort,
-                options.sealTextDetection,
-                "PP-OCRv4_mobile_seal_det"
-            );
-        }
-        if (options.sealTextRecognition?.modelBuffer) {
-            services.sealTextRecognition = await createTextRecognitionService(
-                options.ort,
-                options.sealTextRecognition,
-                "PP-OCRv6_small_rec"
-            );
-        }
+        const resources = new SessionResources();
+        try {
+            const services: PaddleStructureServices = {};
+            if (options.documentOrientation?.modelBuffer) {
+                services.documentOrientation = await createImageClassificationService(
+                    resources,
+                    options.ort,
+                    options.documentOrientation,
+                    "PP-LCNet_x1_0_doc_ori"
+                );
+            }
+            if (options.textImageUnwarping?.modelBuffer) {
+                services.textImageUnwarping = await createTextImageUnwarpingService(
+                    resources,
+                    options.ort,
+                    options.textImageUnwarping,
+                    "UVDoc"
+                );
+            }
+            if (options.regionDetection?.modelBuffer) {
+                services.regionDetection = await createObjectDetectionService(
+                    resources,
+                    options.ort,
+                    options.regionDetection,
+                    "PP-DocBlockLayout"
+                );
+            }
+            if (options.layout?.modelBuffer) {
+                services.layout = await createObjectDetectionService(
+                    resources,
+                    options.ort,
+                    options.layout,
+                    "PP-DocLayout_plus-L"
+                );
+            }
+            if (options.ocr?.detection?.modelBuffer || options.ocr?.recognition?.modelBuffer) {
+                const pipeline = await PaddleOcrService.createInstance({
+                    ...options.ocr,
+                    ort: options.ort,
+                });
+                resources.ownPipeline(pipeline);
+                services.ocr = pipeline;
+            }
+            if (
+                options.tableOcr?.detection?.modelBuffer ||
+                options.tableOcr?.recognition?.modelBuffer
+            ) {
+                const pipeline = await PaddleOcrService.createInstance({
+                    ...options.tableOcr,
+                    ort: options.ort,
+                });
+                resources.ownPipeline(pipeline);
+                services.tableOcr = pipeline;
+            }
+            if (options.tableStructure?.modelBuffer) {
+                services.tableStructure = await createTableStructureService(
+                    resources,
+                    options.ort,
+                    options.tableStructure,
+                    "SLANet"
+                );
+            }
+            if (options.formulaRecognition?.modelBuffer) {
+                services.formulaRecognition = await createFormulaRecognitionService(
+                    resources,
+                    options.ort,
+                    options.formulaRecognition,
+                    "PP-FormulaNet_plus-M"
+                );
+            }
+            if (options.sealTextDetection?.modelBuffer) {
+                services.sealTextDetection = await createTextDetectionService(
+                    resources,
+                    options.ort,
+                    options.sealTextDetection,
+                    "PP-OCRv4_mobile_seal_det"
+                );
+            }
+            if (options.sealTextRecognition?.modelBuffer) {
+                services.sealTextRecognition = await createTextRecognitionService(
+                    resources,
+                    options.ort,
+                    options.sealTextRecognition,
+                    "PP-OCRv6_small_rec"
+                );
+            }
 
-        if (Object.keys(services).length === 0) {
-            throw new Error(
-                "PaddleStructureService.createInstance requires at least one modelBuffer or OCR model pair."
-            );
-        }
+            if (Object.keys(services).length === 0) {
+                throw new Error(
+                    "PaddleStructureService.createInstance requires at least one modelBuffer or OCR model pair."
+                );
+            }
 
-        return new PaddleStructureService(services, options.options);
+            const instance = new PaddleStructureService(services, options.options);
+            instance.resources = resources;
+            return instance;
+        } catch (error) {
+            return resources.rollback(error);
+        }
+    }
+
+    /** Releases factory-owned models; injected services remain owned by the caller. */
+    async destroy(): Promise<void> {
+        await this.resources.release();
     }
 
     async run(
         input: ImageInput,
         options: PaddleStructureRunOptions = {}
     ): Promise<PaddleStructureResult> {
+        this.resources.assertActive();
         const runtimeOptions = mergeStructureOptions(this.options, options);
         let image = normalizeInputToRgb(input);
 
@@ -740,6 +767,7 @@ export class PaddleStructureService {
 }
 
 async function createImageClassificationService(
+    resources: SessionResources,
     ort: OrtModule,
     options: PaddleStructureClassificationCreateOptions,
     defaultPreset: ImageClassificationPresetName
@@ -748,7 +776,7 @@ async function createImageClassificationService(
     if (!modelBuffer) {
         throw new Error(`${preset} modelBuffer is required.`);
     }
-    const session = await ort.InferenceSession.create(modelBuffer);
+    const session = await resources.createSession(ort, modelBuffer);
     return new ImageClassificationService(ort, session, {
         ...getImageClassificationPresetOptions(preset),
         ...runtimeOptions,
@@ -756,6 +784,7 @@ async function createImageClassificationService(
 }
 
 async function createTextImageUnwarpingService(
+    resources: SessionResources,
     ort: OrtModule,
     options: PaddleStructureTextImageUnwarpingCreateOptions,
     defaultPreset: TextImageUnwarpingPresetName
@@ -764,7 +793,7 @@ async function createTextImageUnwarpingService(
     if (!modelBuffer) {
         throw new Error(`${preset} modelBuffer is required.`);
     }
-    const session = await ort.InferenceSession.create(modelBuffer);
+    const session = await resources.createSession(ort, modelBuffer);
     return new TextImageUnwarpingService(ort, session, {
         ...getTextImageUnwarpingPresetOptions(preset),
         ...runtimeOptions,
@@ -772,6 +801,7 @@ async function createTextImageUnwarpingService(
 }
 
 async function createObjectDetectionService(
+    resources: SessionResources,
     ort: OrtModule,
     options: PaddleStructureObjectDetectionCreateOptions,
     defaultPreset: ObjectDetectionPresetName
@@ -780,7 +810,7 @@ async function createObjectDetectionService(
     if (!modelBuffer) {
         throw new Error(`${preset} modelBuffer is required.`);
     }
-    const session = await ort.InferenceSession.create(modelBuffer);
+    const session = await resources.createSession(ort, modelBuffer);
     return new ObjectDetectionService(ort, session, {
         ...getObjectDetectionPresetOptions(preset),
         ...runtimeOptions,
@@ -788,6 +818,7 @@ async function createObjectDetectionService(
 }
 
 async function createTableStructureService(
+    resources: SessionResources,
     ort: OrtModule,
     options: PaddleStructureTableCreateOptions,
     defaultPreset: TableStructureRecognitionPresetName
@@ -796,7 +827,7 @@ async function createTableStructureService(
     if (!modelBuffer) {
         throw new Error(`${preset} modelBuffer is required.`);
     }
-    const session = await ort.InferenceSession.create(modelBuffer);
+    const session = await resources.createSession(ort, modelBuffer);
     return new TableStructureRecognitionService(ort, session, {
         ...getTableStructureRecognitionPresetOptions(preset),
         ...runtimeOptions,
@@ -804,6 +835,7 @@ async function createTableStructureService(
 }
 
 async function createFormulaRecognitionService(
+    resources: SessionResources,
     ort: OrtModule,
     options: PaddleStructureFormulaCreateOptions,
     defaultPreset: FormulaRecognitionPresetName
@@ -812,7 +844,7 @@ async function createFormulaRecognitionService(
     if (!modelBuffer) {
         throw new Error(`${preset} modelBuffer is required.`);
     }
-    const session = await ort.InferenceSession.create(modelBuffer);
+    const session = await resources.createSession(ort, modelBuffer);
     return new FormulaRecognitionService(ort, session, {
         ...getFormulaRecognitionPresetOptions(preset),
         ...runtimeOptions,
@@ -820,6 +852,7 @@ async function createFormulaRecognitionService(
 }
 
 async function createTextDetectionService(
+    resources: SessionResources,
     ort: OrtModule,
     options: PaddleStructureTextDetectionCreateOptions,
     defaultPreset: TextDetectionPresetName
@@ -828,7 +861,7 @@ async function createTextDetectionService(
     if (!modelBuffer) {
         throw new Error(`${preset} modelBuffer is required.`);
     }
-    const session = await ort.InferenceSession.create(modelBuffer);
+    const session = await resources.createSession(ort, modelBuffer);
     return new DetectionService(ort, session, {
         ...getTextDetectionPresetOptions(preset),
         ...runtimeOptions,
@@ -836,6 +869,7 @@ async function createTextDetectionService(
 }
 
 async function createTextRecognitionService(
+    resources: SessionResources,
     ort: OrtModule,
     options: PaddleStructureTextRecognitionCreateOptions,
     defaultPreset: TextRecognitionPresetName
@@ -844,7 +878,7 @@ async function createTextRecognitionService(
     if (!modelBuffer) {
         throw new Error(`${preset} modelBuffer is required.`);
     }
-    const session = await ort.InferenceSession.create(modelBuffer);
+    const session = await resources.createSession(ort, modelBuffer);
     return new RecognitionService(ort, session, {
         ...getTextRecognitionPresetOptions(preset),
         ...runtimeOptions,

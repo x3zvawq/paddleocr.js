@@ -7,6 +7,7 @@ import {
     DEFAULT_TEXTLINE_ORIENTATION_OPTIONS,
 } from "../constants.ts";
 import { normalizeInputToRgb } from "../core/input.ts";
+import { SessionResources } from "../core/session-resources.ts";
 import type {
     DetectionRuntimeOptions,
     ImageInput,
@@ -43,6 +44,8 @@ export interface FlattenedPaddleOcrResult {
  */
 export class PaddleOcrService {
     options: PaddleOptions;
+    private readonly resources = new SessionResources();
+    private state: "idle" | "initializing" | "ready" | "destroyed" = "idle";
 
     detectionSession: OrtInferenceSession | null = null;
     detectionService: DetectionService | null = null;
@@ -91,57 +94,78 @@ export class PaddleOcrService {
      * Initialize the OCR service by loading models
      */
     public async initialize(): Promise<void> {
-        const ort = this.options.ort;
-        if (!ort) {
+        if (this.state !== "idle") {
             throw new Error(
-                "PaddleOcrService requires the 'ort' option to be set with onnxruntime-node or onnxruntime-wen."
+                `Cannot initialize OCR service in state ${this.state}. Create a new instance instead.`
             );
         }
+        this.state = "initializing";
+        try {
+            const ort = this.options.ort;
+            if (!ort) {
+                throw new Error(
+                    "PaddleOcrService requires the 'ort' option to be set with onnxruntime-node or onnxruntime-wen."
+                );
+            }
 
-        // Init detection service
-        const detectionModelBuffer = this.options.detection?.modelBuffer;
-        if (!detectionModelBuffer) {
-            throw new Error(
-                "Detection model buffer is required. Please provide a valid ONNX model."
-            );
-        }
-        this.detectionSession = await ort.InferenceSession.create(detectionModelBuffer);
-        const { modelBuffer: _detectionModelBuffer, ...detectionOptions } =
-            this.options.detection ?? {};
-        this.detectionService = new DetectionService(ort, this.detectionSession, detectionOptions);
-
-        // Init recognition service
-        const recognitionModelBuffer = this.options.recognition?.modelBuffer;
-        if (!recognitionModelBuffer) {
-            throw new Error(
-                "Recognition model buffer is required. Please provide a valid ONNX model."
-            );
-        }
-        this.recognitionSession = await ort.InferenceSession.create(recognitionModelBuffer);
-        const { modelBuffer: _recognitionModelBuffer, ...recognitionOptions } =
-            this.options.recognition ?? {};
-        this.recognitionService = new RecognitionService(
-            ort,
-            this.recognitionSession,
-            recognitionOptions
-        );
-
-        const textlineOrientationModelBuffer = this.options.textlineOrientation?.modelBuffer;
-        if (textlineOrientationModelBuffer) {
-            this.textlineOrientationSession = await ort.InferenceSession.create(
-                textlineOrientationModelBuffer
-            );
-            const {
-                modelBuffer: _textlineOrientationModelBuffer,
-                enabled: _enabled,
-                threshold: _threshold,
-                ...textlineOrientationOptions
-            } = this.options.textlineOrientation ?? {};
-            this.textlineOrientationService = new ImageClassificationService(
+            // Init detection service
+            const detectionModelBuffer = this.options.detection?.modelBuffer;
+            if (!detectionModelBuffer) {
+                throw new Error(
+                    "Detection model buffer is required. Please provide a valid ONNX model."
+                );
+            }
+            this.detectionSession = await this.resources.createSession(ort, detectionModelBuffer);
+            const { modelBuffer: _detectionModelBuffer, ...detectionOptions } =
+                this.options.detection ?? {};
+            this.detectionService = new DetectionService(
                 ort,
-                this.textlineOrientationSession,
-                textlineOrientationOptions
+                this.detectionSession,
+                detectionOptions
             );
+
+            // Init recognition service
+            const recognitionModelBuffer = this.options.recognition?.modelBuffer;
+            if (!recognitionModelBuffer) {
+                throw new Error(
+                    "Recognition model buffer is required. Please provide a valid ONNX model."
+                );
+            }
+            this.recognitionSession = await this.resources.createSession(
+                ort,
+                recognitionModelBuffer
+            );
+            const { modelBuffer: _recognitionModelBuffer, ...recognitionOptions } =
+                this.options.recognition ?? {};
+            this.recognitionService = new RecognitionService(
+                ort,
+                this.recognitionSession,
+                recognitionOptions
+            );
+
+            const textlineOrientationModelBuffer = this.options.textlineOrientation?.modelBuffer;
+            if (textlineOrientationModelBuffer) {
+                this.textlineOrientationSession = await this.resources.createSession(
+                    ort,
+                    textlineOrientationModelBuffer
+                );
+                const {
+                    modelBuffer: _textlineOrientationModelBuffer,
+                    enabled: _enabled,
+                    threshold: _threshold,
+                    ...textlineOrientationOptions
+                } = this.options.textlineOrientation ?? {};
+                this.textlineOrientationService = new ImageClassificationService(
+                    ort,
+                    this.textlineOrientationSession,
+                    textlineOrientationOptions
+                );
+            }
+            this.state = "ready";
+        } catch (error) {
+            this.state = "destroyed";
+            this.clearServices();
+            await this.resources.rollback(error);
         }
     }
 
@@ -149,7 +173,7 @@ export class PaddleOcrService {
      * Check if the service is initialized with models loaded
      */
     public isInitialized(): boolean {
-        return this.detectionSession !== null && this.recognitionSession !== null;
+        return this.state === "ready";
     }
 
     /**
@@ -230,7 +254,7 @@ export class PaddleOcrService {
         input: ImageInput,
         options?: RecognitionOptions
     ): Promise<RecognitionResult[]> {
-        if (!this.detectionService || !this.recognitionService) {
+        if (!this.isInitialized()) {
             throw new Error("PaddleOcrService is not initialized. Please call initialize() first.");
         }
         const detectionRuntimeOptions = this.resolveDetectionRuntimeOptions(options?.detection);
@@ -352,13 +376,23 @@ export class PaddleOcrService {
         return result;
     }
 
-    /**
-     * Releases the onnx runtime session for both
-     * detection and recognition model.
-     */
+    /** Call after pending recognition work has completed. */
     public async destroy(): Promise<void> {
-        await this.detectionSession?.release();
-        await this.recognitionSession?.release();
+        if (this.state === "initializing") {
+            throw new Error("Wait for OCR initialization to finish before destroying the service.");
+        }
+        this.state = "destroyed";
+        this.clearServices();
+        await this.resources.release();
+    }
+
+    private clearServices(): void {
+        this.detectionSession = null;
+        this.recognitionSession = null;
+        this.textlineOrientationSession = null;
+        this.detectionService = null;
+        this.recognitionService = null;
+        this.textlineOrientationService = null;
     }
 }
 

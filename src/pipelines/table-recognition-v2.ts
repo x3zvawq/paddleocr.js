@@ -1,3 +1,4 @@
+import { SessionResources } from "../core/session-resources.ts";
 import type {
     ImageClassificationPresetName,
     ImageClassificationRuntimeOptions,
@@ -149,6 +150,7 @@ const DEFAULT_TABLE_RECOGNITION_V2_OPTIONS: TableRecognitionV2RunOptions = {
 };
 
 export class TableRecognitionV2Service {
+    private resources = new SessionResources();
     private readonly services: TableRecognitionV2Services;
     private readonly options: TableRecognitionV2RunOptions;
 
@@ -172,62 +174,82 @@ export class TableRecognitionV2Service {
             );
         }
 
-        const services: TableRecognitionV2Services = {};
-        if (options.tableClassification?.modelBuffer) {
-            services.tableClassification = await createImageClassificationService(
-                options.ort,
-                options.tableClassification,
-                "PP-LCNet_x1_0_table_cls"
-            );
-        }
-        if (options.wiredTableStructure?.modelBuffer) {
-            services.wiredTableStructure = await createTableStructureService(
-                options.ort,
-                options.wiredTableStructure,
-                "SLANeXt_wired"
-            );
-        }
-        if (options.wirelessTableStructure?.modelBuffer) {
-            services.wirelessTableStructure = await createTableStructureService(
-                options.ort,
-                options.wirelessTableStructure,
-                "SLANeXt_wireless"
-            );
-        }
-        if (options.wiredTableCellsDetection?.modelBuffer) {
-            services.wiredTableCellsDetection = await createObjectDetectionService(
-                options.ort,
-                options.wiredTableCellsDetection,
-                "RT-DETR-L_wired_table_cell_det"
-            );
-        }
-        if (options.wirelessTableCellsDetection?.modelBuffer) {
-            services.wirelessTableCellsDetection = await createObjectDetectionService(
-                options.ort,
-                options.wirelessTableCellsDetection,
-                "RT-DETR-L_wireless_table_cell_det"
-            );
-        }
-        if (options.ocr?.detection?.modelBuffer || options.ocr?.recognition?.modelBuffer) {
-            services.ocr = await PaddleOcrService.createInstance({
-                ...options.ocr,
-                ort: options.ort,
-            });
-        }
+        const resources = new SessionResources();
+        try {
+            const services: TableRecognitionV2Services = {};
+            if (options.tableClassification?.modelBuffer) {
+                services.tableClassification = await createImageClassificationService(
+                    resources,
+                    options.ort,
+                    options.tableClassification,
+                    "PP-LCNet_x1_0_table_cls"
+                );
+            }
+            if (options.wiredTableStructure?.modelBuffer) {
+                services.wiredTableStructure = await createTableStructureService(
+                    resources,
+                    options.ort,
+                    options.wiredTableStructure,
+                    "SLANeXt_wired"
+                );
+            }
+            if (options.wirelessTableStructure?.modelBuffer) {
+                services.wirelessTableStructure = await createTableStructureService(
+                    resources,
+                    options.ort,
+                    options.wirelessTableStructure,
+                    "SLANeXt_wireless"
+                );
+            }
+            if (options.wiredTableCellsDetection?.modelBuffer) {
+                services.wiredTableCellsDetection = await createObjectDetectionService(
+                    resources,
+                    options.ort,
+                    options.wiredTableCellsDetection,
+                    "RT-DETR-L_wired_table_cell_det"
+                );
+            }
+            if (options.wirelessTableCellsDetection?.modelBuffer) {
+                services.wirelessTableCellsDetection = await createObjectDetectionService(
+                    resources,
+                    options.ort,
+                    options.wirelessTableCellsDetection,
+                    "RT-DETR-L_wireless_table_cell_det"
+                );
+            }
+            if (options.ocr?.detection?.modelBuffer || options.ocr?.recognition?.modelBuffer) {
+                const pipeline = await PaddleOcrService.createInstance({
+                    ...options.ocr,
+                    ort: options.ort,
+                });
+                resources.ownPipeline(pipeline);
+                services.ocr = pipeline;
+            }
 
-        if (Object.keys(services).length === 0) {
-            throw new Error(
-                "TableRecognitionV2Service.createInstance requires at least one modelBuffer for table classification, table structure, table cell detection, or OCR."
-            );
-        }
+            if (Object.keys(services).length === 0) {
+                throw new Error(
+                    "TableRecognitionV2Service.createInstance requires at least one modelBuffer for table classification, table structure, table cell detection, or OCR."
+                );
+            }
 
-        return new TableRecognitionV2Service(services, options.options);
+            const instance = new TableRecognitionV2Service(services, options.options);
+            instance.resources = resources;
+            return instance;
+        } catch (error) {
+            return resources.rollback(error);
+        }
+    }
+
+    /** Releases factory-owned models; injected services remain owned by the caller. */
+    async destroy(): Promise<void> {
+        await this.resources.release();
     }
 
     async run(
         input: ImageInput,
         options: TableRecognitionV2RunOptions = {}
     ): Promise<TableRecognitionV2Result> {
+        this.resources.assertActive();
         const runtimeOptions = mergeTableRecognitionV2Options(this.options, options);
         const classification = await this.runTableClassification(input, runtimeOptions);
         const tableType = runtimeOptions.tableType ?? inferTableType(classification);
@@ -342,6 +364,7 @@ export class TableRecognitionV2Service {
 }
 
 async function createImageClassificationService(
+    resources: SessionResources,
     ort: OrtModule,
     options: TableRecognitionV2ClassificationCreateOptions,
     defaultPreset: ImageClassificationPresetName
@@ -350,7 +373,7 @@ async function createImageClassificationService(
     if (!modelBuffer) {
         throw new Error(`${preset} modelBuffer is required.`);
     }
-    const session = await ort.InferenceSession.create(modelBuffer);
+    const session = await resources.createSession(ort, modelBuffer);
     return new ImageClassificationService(ort, session, {
         ...getImageClassificationPresetOptions(preset),
         ...runtimeOptions,
@@ -358,6 +381,7 @@ async function createImageClassificationService(
 }
 
 async function createTableStructureService(
+    resources: SessionResources,
     ort: OrtModule,
     options: TableRecognitionV2StructureCreateOptions,
     defaultPreset: TableStructureRecognitionPresetName
@@ -366,7 +390,7 @@ async function createTableStructureService(
     if (!modelBuffer) {
         throw new Error(`${preset} modelBuffer is required.`);
     }
-    const session = await ort.InferenceSession.create(modelBuffer);
+    const session = await resources.createSession(ort, modelBuffer);
     return new TableStructureRecognitionService(ort, session, {
         ...getTableStructureRecognitionPresetOptions(preset),
         ...runtimeOptions,
@@ -374,6 +398,7 @@ async function createTableStructureService(
 }
 
 async function createObjectDetectionService(
+    resources: SessionResources,
     ort: OrtModule,
     options: TableRecognitionV2CellsCreateOptions,
     defaultPreset: "RT-DETR-L_wired_table_cell_det" | "RT-DETR-L_wireless_table_cell_det"
@@ -382,7 +407,7 @@ async function createObjectDetectionService(
     if (!modelBuffer) {
         throw new Error(`${preset} modelBuffer is required.`);
     }
-    const session = await ort.InferenceSession.create(modelBuffer);
+    const session = await resources.createSession(ort, modelBuffer);
     return new ObjectDetectionService(ort, session, {
         ...getObjectDetectionPresetOptions(preset),
         ...runtimeOptions,
