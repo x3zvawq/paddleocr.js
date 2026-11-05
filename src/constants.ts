@@ -46,6 +46,7 @@ export const DEFAULT_RECOGNITION_OPTIONS: RecognitionDefaults = {
     imageHeight: 48,
     imageWidth: 320,
     charactersDictionary: [],
+    useSpaceChar: false,
     reverseText: false,
 };
 

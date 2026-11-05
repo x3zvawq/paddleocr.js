@@ -4,13 +4,14 @@ import type {
     RecognitionRuntimeOptions,
 } from "../interface.ts";
 
-export interface PaddleOcrDictionaryRequirement {
-    name: string;
-    fileName: string;
-    useSpaceChar: boolean;
-    dictionaryLength: number;
-    recognitionOutputClasses: number;
-}
+import { getTextDetectionPresetOptions } from "../modules/text-detection/preset.ts";
+import { getTextRecognitionPreset } from "../modules/text-recognition/preset.ts";
+import type {
+    PaddleOcrDictionaryRequirement,
+    TextRecognitionPresetName,
+} from "../types/text-recognition.ts";
+
+export type { PaddleOcrDictionaryRequirement } from "../types/text-recognition.ts";
 
 export interface PaddleOcrModelPreset {
     name: PaddleOcrModelPresetName;
@@ -48,101 +49,62 @@ const PPOCRV5_DETECTION: Partial<DetectionRuntimeOptions> = {
     unclipRatio: 1.5,
 };
 
-const PPOCRV6_DETECTION: Partial<DetectionRuntimeOptions> = {
-    channelOrder: "bgr",
-    maxSideLength: 736,
-    limitType: "min",
-    maxSideLimit: 4000,
-    textPixelThreshold: 0.2,
-    boxScoreThreshold: 0.45,
-    maxCandidates: 3000,
-    unclipRatio: 1.4,
-};
+function createModelPreset(
+    name: PaddleOcrModelPresetName,
+    detection: Partial<DetectionRuntimeOptions>,
+    recognitionName: TextRecognitionPresetName
+): PaddleOcrModelPreset {
+    const recognition = getTextRecognitionPreset(recognitionName);
+    return {
+        name,
+        detection,
+        recognition: { ...recognition.options },
+        dictionary: recognition.dictionary,
+    };
+}
 
-const PPOCR_RECOGNITION: Partial<RecognitionRuntimeOptions> = {
-    channelOrder: "bgr",
-    outputSelectionStrategy: "ctc-logits",
-    imageHeight: 48,
-    imageWidth: 320,
-};
-
-const PPOCRV5_RECOGNITION_OUTPUT_CLASSES = 18385;
-const PPOCRV5_DICTIONARY_LENGTH = 18384;
-const PPOCRV6_RECOGNITION_OUTPUT_CLASSES = 18710;
-const PPOCRV6_DICTIONARY_LENGTH = 18708;
-const PPOCRV6_TINY_RECOGNITION_OUTPUT_CLASSES = 6906;
-const PPOCRV6_TINY_DICTIONARY_LENGTH = 6904;
-
-const PPOCRV5_DICTIONARY: PaddleOcrDictionaryRequirement = {
-    name: "ppocrv5",
-    fileName: "ppocrv5_dict.txt",
-    useSpaceChar: true,
-    dictionaryLength: PPOCRV5_DICTIONARY_LENGTH,
-    recognitionOutputClasses: PPOCRV5_RECOGNITION_OUTPUT_CLASSES,
-};
-
-const PPOCRV6_DICTIONARY: PaddleOcrDictionaryRequirement = {
-    name: "ppocrv6",
-    fileName: "ppocrv6_dict.txt",
-    useSpaceChar: true,
-    dictionaryLength: PPOCRV6_DICTIONARY_LENGTH,
-    recognitionOutputClasses: PPOCRV6_RECOGNITION_OUTPUT_CLASSES,
-};
-
-const PPOCRV6_TINY_DICTIONARY: PaddleOcrDictionaryRequirement = {
-    name: "ppocrv6_tiny",
-    fileName: "ppocrv6_tiny_dict.txt",
-    useSpaceChar: true,
-    dictionaryLength: PPOCRV6_TINY_DICTIONARY_LENGTH,
-    recognitionOutputClasses: PPOCRV6_TINY_RECOGNITION_OUTPUT_CLASSES,
-};
+const v5 = getTextRecognitionPreset("PP-OCRv5_mobile_rec").dictionary;
+const v6 = getTextRecognitionPreset("PP-OCRv6_small_rec").dictionary;
+const v6Tiny = getTextRecognitionPreset("PP-OCRv6_tiny_rec").dictionary;
+const PPOCRV5_RECOGNITION_OUTPUT_CLASSES = v5.recognitionOutputClasses;
+const PPOCRV5_DICTIONARY_LENGTH = v5.dictionaryLength;
+const PPOCRV6_RECOGNITION_OUTPUT_CLASSES = v6.recognitionOutputClasses;
+const PPOCRV6_DICTIONARY_LENGTH = v6.dictionaryLength;
+const PPOCRV6_TINY_RECOGNITION_OUTPUT_CLASSES = v6Tiny.recognitionOutputClasses;
+const PPOCRV6_TINY_DICTIONARY_LENGTH = v6Tiny.dictionaryLength;
 
 export const MODEL_PRESETS: Record<PaddleOcrModelPresetName, PaddleOcrModelPreset> = {
-    "PP-OCRv5": {
-        name: "PP-OCRv5",
-        detection: PPOCRV5_DETECTION,
-        recognition: PPOCR_RECOGNITION,
-        dictionary: PPOCRV5_DICTIONARY,
-    },
-    "PP-OCRv5_mobile": {
-        name: "PP-OCRv5_mobile",
-        detection: PPOCRV5_DETECTION,
-        recognition: PPOCR_RECOGNITION,
-        dictionary: PPOCRV5_DICTIONARY,
-    },
-    "PP-OCRv5_server": {
-        name: "PP-OCRv5_server",
-        detection: PPOCRV5_DETECTION,
-        recognition: PPOCR_RECOGNITION,
-        dictionary: PPOCRV5_DICTIONARY,
-    },
-    "PP-OCRv6": {
-        name: "PP-OCRv6",
-        detection: PPOCRV6_DETECTION,
-        recognition: PPOCR_RECOGNITION,
-        dictionary: PPOCRV6_DICTIONARY,
-    },
-    "PP-OCRv6_tiny": {
-        name: "PP-OCRv6_tiny",
-        detection: {
-            ...PPOCRV6_DETECTION,
-            boxScoreThreshold: 0.4,
-        },
-        recognition: PPOCR_RECOGNITION,
-        dictionary: PPOCRV6_TINY_DICTIONARY,
-    },
-    "PP-OCRv6_small": {
-        name: "PP-OCRv6_small",
-        detection: PPOCRV6_DETECTION,
-        recognition: PPOCR_RECOGNITION,
-        dictionary: PPOCRV6_DICTIONARY,
-    },
-    "PP-OCRv6_medium": {
-        name: "PP-OCRv6_medium",
-        detection: PPOCRV6_DETECTION,
-        recognition: PPOCR_RECOGNITION,
-        dictionary: PPOCRV6_DICTIONARY,
-    },
+    "PP-OCRv5": createModelPreset("PP-OCRv5", PPOCRV5_DETECTION, "PP-OCRv5_mobile_rec"),
+    "PP-OCRv5_mobile": createModelPreset(
+        "PP-OCRv5_mobile",
+        PPOCRV5_DETECTION,
+        "PP-OCRv5_mobile_rec"
+    ),
+    "PP-OCRv5_server": createModelPreset(
+        "PP-OCRv5_server",
+        PPOCRV5_DETECTION,
+        "PP-OCRv5_server_rec"
+    ),
+    "PP-OCRv6": createModelPreset(
+        "PP-OCRv6",
+        getTextDetectionPresetOptions("PP-OCRv6_small_det"),
+        "PP-OCRv6_small_rec"
+    ),
+    "PP-OCRv6_tiny": createModelPreset(
+        "PP-OCRv6_tiny",
+        getTextDetectionPresetOptions("PP-OCRv6_tiny_det"),
+        "PP-OCRv6_tiny_rec"
+    ),
+    "PP-OCRv6_small": createModelPreset(
+        "PP-OCRv6_small",
+        getTextDetectionPresetOptions("PP-OCRv6_small_det"),
+        "PP-OCRv6_small_rec"
+    ),
+    "PP-OCRv6_medium": createModelPreset(
+        "PP-OCRv6_medium",
+        getTextDetectionPresetOptions("PP-OCRv6_medium_det"),
+        "PP-OCRv6_medium_rec"
+    ),
 };
 
 export function getModelPreset(name: PaddleOcrModelPresetName): PaddleOcrModelPreset {

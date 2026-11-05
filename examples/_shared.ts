@@ -7,6 +7,7 @@ import {
     type OrtInferenceSession,
     type OrtModule,
     type PaddleOcrModelPresetName,
+    parseRecognitionDictionary,
 } from "../src/index.ts";
 
 export const modelRoot = process.env.PADDLEOCR_JS_ONNX_DIR ?? "paddleocr-js-onnx";
@@ -67,16 +68,11 @@ export async function loadPresetDictionary(
     const text = await readRequiredFile(path, `Prepare the ${presetName} dictionary first.`).then(
         (buffer) => buffer.toString("utf-8")
     );
-    const dictionary = text.split(/\r?\n/);
-    if (dictionary[dictionary.length - 1] === "") {
-        dictionary.pop();
-    }
-
+    const dictionary = parseRecognitionDictionary(text);
     if (dictionary.length !== preset.dictionary.dictionaryLength) {
         throw new Error(
             `${presetName} dictionary length mismatch: expected ${preset.dictionary.dictionaryLength}, got ${dictionary.length}.`
         );
     }
-
-    return preset.dictionary.useSpaceChar ? [...dictionary, " "] : dictionary;
+    return dictionary;
 }

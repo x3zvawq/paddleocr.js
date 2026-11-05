@@ -165,6 +165,7 @@ export {
     type TextImageUnwarpingRawResult,
     TextImageUnwarpingService,
 } from "./modules/text-image-unwarping/service.ts";
+export { parseRecognitionDictionary } from "./modules/text-recognition/postprocess.ts";
 export {
     getTextRecognitionPreset,
     getTextRecognitionPresetOptions,

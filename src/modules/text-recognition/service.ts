@@ -18,6 +18,8 @@ import type {
     TextLineOrientationRuntimeOptions,
 } from "../../interface.ts";
 
+import { createCtcDecoder } from "./postprocess.ts";
+
 export interface RecognitionResult {
     text: string;
     box: Box;
@@ -79,6 +81,7 @@ export class RecognitionService {
         const charWhiteListSet = options?.charWhiteList?.length
             ? new Set(options.charWhiteList)
             : undefined;
+        const decode = createCtcDecoder(recognitionOptions, charWhiteListSet);
         const total = validBoxes.length;
         const onProgress = options?.onProgress;
 
@@ -99,7 +102,8 @@ export class RecognitionService {
                     textlineOrientation: options?.textlineOrientation,
                     textlineOrientationClassifier: options?.textlineOrientationClassifier,
                 },
-                recognitionOptions
+                recognitionOptions,
+                decode
             );
             if (result) {
                 results.push(result);
@@ -147,7 +151,8 @@ export class RecognitionService {
      */
     private async processBox(
         task: SingleRecognitionTask,
-        runtimeOptions: RecognitionRuntimeOptions
+        runtimeOptions: RecognitionRuntimeOptions,
+        decode: ReturnType<typeof createCtcDecoder>
     ): Promise<RecognitionResult | null> {
         const { image, box } = task;
 
@@ -190,19 +195,8 @@ export class RecognitionService {
             runtimeOptions.imageHeight,
             targetWidth,
         ]);
-        const { data: outputData, dims: shape } = await this.runInference(
-            inputTensor,
-            runtimeOptions
-        );
-
-        const [, sequenceLength, numClasses] = shape;
-        const { text: recognizedText, confidence } = this.ctcLabelDecode(
-            outputData as Float32Array,
-            sequenceLength,
-            numClasses,
-            runtimeOptions,
-            task.charWhiteSet
-        );
+        const output = await this.runInference(inputTensor, runtimeOptions);
+        const { text: recognizedText, confidence } = decode(output);
 
         return { text: recognizedText, box, confidence, textlineOrientation };
     }
@@ -424,88 +418,4 @@ export class RecognitionService {
                 .join(", ")}`
         );
     }
-
-    private ctcLabelDecode(
-        logits: Float32Array,
-        sequenceLength: number,
-        numClasses: number,
-        runtimeOptions: RecognitionRuntimeOptions,
-        charWhiteSet?: Set<string>
-    ): { text: string; confidence: number } {
-        const dict = runtimeOptions.charactersDictionary;
-        const dictionaryIncludesBlank = dict[0] === "" || dict[0] === "blank";
-        const requiredDictionaryLength = dictionaryIncludesBlank ? numClasses : numClasses - 1;
-        if (dict.length < requiredDictionaryLength) {
-            throw new Error(
-                `Recognition charactersDictionary length ${dict.length} is too small for model output classes ${numClasses}. Expected at least ${requiredDictionaryLength}${dictionaryIncludesBlank ? " including the CTC blank entry" : ""}.`
-            );
-        }
-        let text = "";
-        const scores: number[] = [];
-
-        let lastIndex = -1;
-
-        for (let t = 0; t < sequenceLength; t++) {
-            let maxScore = -Infinity;
-            let maxScoreIndex = 0;
-
-            const offset = t * numClasses;
-            for (let i = 0; i < numClasses; i++) {
-                const val = logits[offset + i];
-                if (val > maxScore) {
-                    maxScore = val;
-                    maxScoreIndex = i;
-                }
-            }
-
-            if (maxScoreIndex === lastIndex) {
-                continue;
-            }
-
-            lastIndex = maxScoreIndex;
-
-            if (maxScoreIndex === 0) {
-                continue;
-            }
-
-            const dictionaryIndex = dictionaryIncludesBlank ? maxScoreIndex : maxScoreIndex - 1;
-            const char = dict[dictionaryIndex] || "";
-
-            if (charWhiteSet && !charWhiteSet.has(char) && char !== " ") {
-                continue;
-            }
-
-            text += char;
-            scores.push(maxScore);
-        }
-
-        const outputText = runtimeOptions.reverseText ? reverseTextLikePaddleOcr(text) : text;
-        return {
-            text: outputText,
-            confidence:
-                scores.length > 0
-                    ? scores.reduce((sum, score) => sum + score, 0) / scores.length
-                    : 0,
-        };
-    }
-}
-
-function reverseTextLikePaddleOcr(text: string): string {
-    const groups: string[] = [];
-    let current = "";
-    for (const char of text) {
-        if (!/[a-zA-Z0-9 :*./%+-]/.test(char)) {
-            if (current) {
-                groups.push(current);
-            }
-            groups.push(char);
-            current = "";
-            continue;
-        }
-        current += char;
-    }
-    if (current) {
-        groups.push(current);
-    }
-    return groups.reverse().join("");
 }

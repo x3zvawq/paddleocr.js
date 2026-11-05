@@ -60,7 +60,7 @@ label 或公式 tokenizer 读成对应的数据结构，再传给 service 或模
 ```ts
 import { readFile } from "node:fs/promises";
 import * as ort from "onnxruntime-node";
-import { PaddleOcrService } from "paddleocr";
+import { PaddleOcrService, parseRecognitionDictionary } from "paddleocr";
 
 function toArrayBuffer(buffer: Buffer): ArrayBuffer {
     return buffer.buffer.slice(
@@ -86,7 +86,7 @@ const ocr = await PaddleOcrService.createInstance({
     },
     recognition: {
         modelBuffer: toArrayBuffer(recModel),
-        charactersDictionary: dictText.trimEnd().split(/\r?\n/),
+        charactersDictionary: parseRecognitionDictionary(dictText),
     },
     textlineOrientation: {
         modelBuffer: toArrayBuffer(textlineModel),
@@ -103,6 +103,11 @@ const results = await ocr.recognize(inputPixels, {
 const text = ocr.processRecognition(results).text;
 console.log(text);
 ```
+
+`parseRecognitionDictionary()` 保留普通空格和可选的首项 CTC blank，只移除文件末尾换行。
+识别 preset 默认启用 `useSpaceChar`：只有字典相对模型类别数恰好缺少最后一个空格时才补齐，
+已准备好的完整字典保持原样；其他长度不匹配或空字符项直接报错。
+不使用 preset 时，可为符合该规则的模型显式设置 `recognition.useSpaceChar: true`。
 
 ## 图片输入
 

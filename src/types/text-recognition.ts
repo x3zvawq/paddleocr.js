@@ -1,5 +1,14 @@
 import type { ImageChannelOrder } from "./common.ts";
 
+/** Metadata describes the distributed dictionary file, before adding a missing space. */
+export interface PaddleOcrDictionaryRequirement {
+    name: string;
+    fileName: string;
+    useSpaceChar: boolean;
+    dictionaryLength: number;
+    recognitionOutputClasses: number;
+}
+
 export type RecognitionOutputSelectionStrategy = "first" | "ctc-logits";
 
 export type TextRecognitionPresetName =
@@ -57,6 +66,9 @@ export interface RecognitionRuntimeOptions {
      * recognition result decoding.
      */
     charactersDictionary?: string[];
+
+    /** Append the terminal space class when the dictionary is exactly one entry short. */
+    useSpaceChar?: boolean;
 
     /**
      * Reverse decoded CTC text with PaddleOCR's Arabic/right-to-left grouping rule.

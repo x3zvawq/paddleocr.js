@@ -62,7 +62,7 @@ This example assumes your application has already decoded an image into
 ```ts
 import { readFile } from "node:fs/promises";
 import * as ort from "onnxruntime-node";
-import { PaddleOcrService } from "paddleocr";
+import { PaddleOcrService, parseRecognitionDictionary } from "paddleocr";
 
 function toArrayBuffer(buffer: Buffer): ArrayBuffer {
     return buffer.buffer.slice(
@@ -88,7 +88,7 @@ const ocr = await PaddleOcrService.createInstance({
     },
     recognition: {
         modelBuffer: toArrayBuffer(recModel),
-        charactersDictionary: dictText.trimEnd().split(/\r?\n/),
+        charactersDictionary: parseRecognitionDictionary(dictText),
     },
     textlineOrientation: {
         modelBuffer: toArrayBuffer(textlineModel),
@@ -105,6 +105,13 @@ const results = await ocr.recognize(inputPixels, {
 const text = ocr.processRecognition(results).text;
 console.log(text);
 ```
+
+`parseRecognitionDictionary()` preserves literal spaces and an optional leading CTC
+blank entry while removing the file's final newline. Recognition presets enable
+`useSpaceChar`: the runtime appends a missing terminal space only when the model's
+class count requires exactly one more entry. Already prepared dictionaries are
+accepted unchanged; other length mismatches and empty character entries throw.
+Without a preset, set `recognition.useSpaceChar: true` for models that use this rule.
 
 ## Input Pixels
 

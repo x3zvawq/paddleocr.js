@@ -1,5 +1,5 @@
 import type { RecognitionRuntimeOptions, TextRecognitionPresetName } from "../../interface.ts";
-import type { PaddleOcrDictionaryRequirement } from "../../pipelines/ocr-preset.ts";
+import type { PaddleOcrDictionaryRequirement } from "../../types/text-recognition.ts";
 
 export type TextRecognitionModule = "text_recognition";
 export type TextRecognitionArchitecture = "CTC";
@@ -60,7 +60,7 @@ function createTextRecognitionPreset(
         preprocessPipeline: PPOCR_PREPROCESS_PIPELINE,
         postprocessName: "CTCLabelDecode",
         dictionary,
-        options: PPOCR_RECOGNITION,
+        options: { ...PPOCR_RECOGNITION, useSpaceChar: dictionary.useSpaceChar },
     };
 }
 
