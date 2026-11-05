@@ -1,4 +1,12 @@
-import type { ImageChannelOrder } from "./common.ts";
+import type { TextLineOrientationResult } from "./classification.ts";
+import type { Box, ImageChannelOrder } from "./common.ts";
+
+export interface RecognitionResult {
+    text: string;
+    box: Box;
+    confidence: number;
+    textlineOrientation?: TextLineOrientationResult;
+}
 
 /** Metadata describes the distributed dictionary file, before adding a missing space. */
 export interface PaddleOcrDictionaryRequirement {

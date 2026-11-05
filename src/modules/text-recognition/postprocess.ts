@@ -1,4 +1,10 @@
-import type { OrtTensor, RecognitionRuntimeOptions } from "../../interface.ts";
+import type { OrtTensor } from "../../types/ort.ts";
+import type { ResolvedRecognitionOptions } from "./options.ts";
+
+type RecognitionDecodeOptions = Pick<
+    ResolvedRecognitionOptions,
+    "charactersDictionary" | "useSpaceChar" | "reverseText"
+>;
 
 /** Remove only the file terminator; leading CTC blank and literal spaces are meaningful. */
 export function parseRecognitionDictionary(text: string): string[] {
@@ -8,7 +14,7 @@ export function parseRecognitionDictionary(text: string): string[] {
 }
 
 function prepareDictionary(
-    options: RecognitionRuntimeOptions,
+    options: RecognitionDecodeOptions,
     numClasses: number
 ): readonly string[] {
     const supplied = options.charactersDictionary;
@@ -34,7 +40,7 @@ function prepareDictionary(
 }
 
 /** Each run prepares its class mapping once, after the first model output establishes C. */
-export function createCtcDecoder(options: RecognitionRuntimeOptions, charWhiteSet?: Set<string>) {
+export function createCtcDecoder(options: RecognitionDecodeOptions, charWhiteSet?: Set<string>) {
     let dictionary: readonly string[] | undefined;
     return (output: OrtTensor): { text: string; confidence: number } => {
         const { data: logits, dims } = output;

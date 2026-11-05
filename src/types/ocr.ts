@@ -1,4 +1,3 @@
-import type { RecognitionResult } from "../modules/text-recognition/service.ts";
 import type {
     TextLineOrientationClassifier,
     TextLineOrientationResult,
@@ -10,6 +9,7 @@ import type { OrtModule } from "./ort.ts";
 import type { DetectionRuntimeOptions, DetectionServiceOptions } from "./text-detection.ts";
 import type {
     RecognitionOrderingOptions,
+    RecognitionResult,
     RecognitionRuntimeOptions,
     RecognitionServiceOptions,
 } from "./text-recognition.ts";

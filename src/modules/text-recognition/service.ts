@@ -1,7 +1,3 @@
-import {
-    DEFAULT_RECOGNITION_OPTIONS,
-    DEFAULT_RECOGNITION_ORDERING_OPTIONS,
-} from "../../constants.ts";
 import type { Image } from "../../core/image.ts";
 import { createInputFeeds, getFixedInputShape } from "../../core/onnx.ts";
 import type {
@@ -11,21 +7,23 @@ import type {
     OrtModule,
     OrtTensor,
     RecognitionOptions,
-    RecognitionOrderingOptions,
+    RecognitionResult,
     RecognitionRuntimeOptions,
     TextLineOrientationClassifier,
     TextLineOrientationResult,
     TextLineOrientationRuntimeOptions,
 } from "../../interface.ts";
 
+import {
+    type ResolvedRecognitionOptions,
+    type ResolvedRecognitionOrderingOptions,
+    resolveRecognitionOptions,
+    resolveRecognitionOrderingOptions,
+} from "./options.ts";
 import { createCtcDecoder } from "./postprocess.ts";
+import { preprocessRecognition } from "./preprocess.ts";
 
-export interface RecognitionResult {
-    text: string;
-    box: Box;
-    confidence: number;
-    textlineOrientation?: TextLineOrientationResult;
-}
+export type { RecognitionResult } from "../../types/text-recognition.ts";
 
 export interface SingleRecognitionTask {
     index: number;
@@ -53,10 +51,7 @@ export class RecognitionService {
         this.session = session;
         this.ortModule = ortModule;
 
-        this.options = {
-            ...DEFAULT_RECOGNITION_OPTIONS,
-            ...options,
-        };
+        this.options = { ...options };
     }
 
     /**
@@ -70,8 +65,8 @@ export class RecognitionService {
         detection: Box[],
         options?: RecognitionOptions
     ): Promise<RecognitionResult[]> {
-        const recognitionOptions = this.resolveRuntimeOptions(options?.recognition);
-        const orderingOptions = this.resolveOrderingOptions(options?.ordering);
+        const recognitionOptions = resolveRecognitionOptions(this.options, options?.recognition);
+        const orderingOptions = resolveRecognitionOrderingOptions(options?.ordering);
         const validBoxes = this.sortBoxesByReadingOrder(
             detection.filter((box) => box.width > 0 && box.height > 0),
             orderingOptions
@@ -105,17 +100,15 @@ export class RecognitionService {
                 recognitionOptions,
                 decode
             );
-            if (result) {
-                results.push(result);
-            }
+            results.push(result);
             onProgress?.({
                 type: "rec",
                 stage: "item",
                 progress: this.createProgress(i + 1, total),
                 index: i,
                 box,
-                result: result ?? undefined,
-                textlineOrientation: result?.textlineOrientation,
+                result,
+                textlineOrientation: result.textlineOrientation,
             });
         }
 
@@ -128,32 +121,14 @@ export class RecognitionService {
         return results;
     }
 
-    private resolveRuntimeOptions(
-        options: Partial<RecognitionRuntimeOptions> = {}
-    ): RecognitionRuntimeOptions {
-        return {
-            ...this.options,
-            ...options,
-        };
-    }
-
-    private resolveOrderingOptions(
-        options: Partial<RecognitionOrderingOptions> = {}
-    ): RecognitionOrderingOptions {
-        return {
-            ...DEFAULT_RECOGNITION_ORDERING_OPTIONS,
-            ...options,
-        };
-    }
-
     /**
      * Process a single text box
      */
     private async processBox(
         task: SingleRecognitionTask,
-        runtimeOptions: RecognitionRuntimeOptions,
+        runtimeOptions: ResolvedRecognitionOptions,
         decode: ReturnType<typeof createCtcDecoder>
-    ): Promise<RecognitionResult | null> {
+    ): Promise<RecognitionResult> {
         const { image, box } = task;
 
         let crop = box.points ? image.cropRotated(box.points) : image.crop(box);
@@ -161,40 +136,17 @@ export class RecognitionService {
         if (textlineOrientation?.rotated) {
             crop = crop.rotate180();
         }
-        const fixedInputWidth = getFixedInputShape(this.session).width;
-        const proportionalWidth = Math.ceil(
-            runtimeOptions.imageHeight * (crop.width / crop.height)
+        const preprocessed = preprocessRecognition(
+            crop,
+            runtimeOptions,
+            task.maxWhRatio,
+            getFixedInputShape(this.session).width
         );
-        const targetWidth =
-            fixedInputWidth ??
-            Math.max(
-                runtimeOptions.imageWidth,
-                proportionalWidth,
-                Math.ceil(runtimeOptions.imageHeight * (task.maxWhRatio ?? 0))
-            );
-        const resizedWidth = Math.min(proportionalWidth, targetWidth);
-        const resizedCrop = crop.resize({
-            width: resizedWidth,
-            height: runtimeOptions.imageHeight,
-        });
-        const resizedTensor = resizedCrop.tensor({
-            mean_values: runtimeOptions.mean,
-            norm_values: runtimeOptions.stdDeviation,
-            channel_order: runtimeOptions.channelOrder,
-        });
-        const tensor = this.padRecognitionTensor(
-            resizedTensor,
-            resizedWidth,
-            runtimeOptions.imageHeight,
-            targetWidth
+        const inputTensor = new this.ortModule.Tensor(
+            "float32",
+            preprocessed.data,
+            preprocessed.dims
         );
-
-        const inputTensor = new this.ortModule.Tensor("float32", tensor, [
-            1,
-            3,
-            runtimeOptions.imageHeight,
-            targetWidth,
-        ]);
         const output = await this.runInference(inputTensor, runtimeOptions);
         const { text: recognizedText, confidence } = decode(output);
 
@@ -235,7 +187,7 @@ export class RecognitionService {
 
     private calculateBatchMaxWhRatio(
         boxes: Box[],
-        runtimeOptions: RecognitionRuntimeOptions
+        runtimeOptions: ResolvedRecognitionOptions
     ): number {
         let maxWhRatio = runtimeOptions.imageWidth / runtimeOptions.imageHeight;
         for (const box of boxes) {
@@ -270,34 +222,12 @@ export class RecognitionService {
         return Math.hypot(a.x - b.x, a.y - b.y);
     }
 
-    private padRecognitionTensor(
-        source: Float32Array,
-        sourceWidth: number,
-        height: number,
-        targetWidth: number
-    ): Float32Array {
-        if (sourceWidth === targetWidth) {
-            return source;
-        }
-
-        const channels = 3;
-        const padded = new Float32Array(channels * height * targetWidth);
-        for (let channel = 0; channel < channels; channel++) {
-            for (let y = 0; y < height; y++) {
-                const sourceStart = channel * height * sourceWidth + y * sourceWidth;
-                const targetStart = channel * height * targetWidth + y * targetWidth;
-                padded.set(source.subarray(sourceStart, sourceStart + sourceWidth), targetStart);
-            }
-        }
-        return padded;
-    }
-
     /**
      * Sort recognition results by reading order (top to bottom, left to right)
      */
     private sortBoxesByReadingOrder(
         boxes: Box[],
-        orderingOptions: RecognitionOrderingOptions
+        orderingOptions: ResolvedRecognitionOrderingOptions
     ): Box[] {
         if (!orderingOptions.sortByReadingOrder) {
             return [...boxes];
@@ -349,13 +279,13 @@ export class RecognitionService {
     private resolveSameLineThreshold(
         boxA: Box,
         boxB: Box,
-        orderingOptions: RecognitionOrderingOptions
+        orderingOptions: ResolvedRecognitionOrderingOptions
     ): number {
         if (orderingOptions.sameLineThresholdRatio !== undefined) {
             return (boxA.height + boxB.height) * orderingOptions.sameLineThresholdRatio;
         }
 
-        return orderingOptions.sameLinePixelThreshold ?? 10;
+        return orderingOptions.sameLinePixelThreshold;
     }
 
     private createProgress(current: number, total: number): OcrProgress {
@@ -371,7 +301,7 @@ export class RecognitionService {
      */
     private async runInference(
         inputTensor: OrtTensor,
-        runtimeOptions: RecognitionRuntimeOptions
+        runtimeOptions: ResolvedRecognitionOptions
     ): Promise<OrtTensor> {
         const results = await this.session.run(createInputFeeds(this.session, inputTensor));
         const outputTensor = this.selectOutputTensor(results, runtimeOptions);
@@ -387,7 +317,7 @@ export class RecognitionService {
 
     private selectOutputTensor(
         results: Record<string, OrtTensor>,
-        runtimeOptions: RecognitionRuntimeOptions
+        runtimeOptions: ResolvedRecognitionOptions
     ): OrtTensor | undefined {
         if (runtimeOptions.outputSelectionStrategy !== "ctc-logits") {
             const outputNodeName = Object.keys(results)[0];
