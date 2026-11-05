@@ -104,14 +104,18 @@ const text = ocr.processRecognition(results).text;
 console.log(text);
 ```
 
-`parseRecognitionDictionary()` 保留普通空格和可选的首项 CTC blank，只移除文件末尾换行。
+`parseRecognitionDictionary()` 是可选工具，保留普通空格和可选的首项 CTC blank，只移除文件末尾换行。
+`recognition.charactersDictionary` 仍可直接传入自行构造的 `string[]`。
 识别 preset 默认启用 `useSpaceChar`：只有字典相对模型类别数恰好缺少最后一个空格时才补齐，
-已准备好的完整字典保持原样；其他长度不匹配或空字符项直接报错。
-不使用 preset 时，可为符合该规则的模型显式设置 `recognition.useSpaceChar: true`。
+已准备好的完整字典保持原样。多余条目和空字符串保留旧行为：未被索引的条目不参与解码，空字符串不输出文本；
+补齐后仍然过短的字典会报错。不使用 preset 时，可为符合该规则的模型显式设置 `recognition.useSpaceChar: true`。
+runtime 不会自动读取字典文件。
 
 三个流水线 service 均提供 `destroy()`；调用前应等待正在执行的任务结束，重复调用会等待同一次清理。
 工厂创建的模型会统一释放，包括文本行方向模型和嵌套 OCR；初始化失败也会清理已创建的模型。
-通过构造函数注入的 service 仍由调用方管理其 ONNX session。销毁后的流水线不可继续使用。
+通过构造函数注入的 service 仍由调用方管理其 ONNX session。
+OCR 支持重复调用 `initialize()`，也支持失败或 `destroy()` 后重新初始化；每次都会先释放之前创建的模型，
+初始化与销毁按调用顺序执行。表格和文档流水线销毁后应重新创建。
 
 ## 图片输入
 

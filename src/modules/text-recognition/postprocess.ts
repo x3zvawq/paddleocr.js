@@ -26,14 +26,9 @@ function prepareDictionary(
         supplied.length === requiredLength - 1 &&
         supplied[supplied.length - 1] !== " ";
     const entries = missingSpace ? [...supplied, " "] : supplied;
-    if (entries.length !== requiredLength) {
+    if (entries.length < requiredLength) {
         throw new Error(
-            `Recognition charactersDictionary length ${supplied.length} does not match model output classes ${numClasses}. Expected ${requiredLength}${includesBlank ? " including the CTC blank entry" : " without the CTC blank entry"}.`
-        );
-    }
-    if (entries.some((entry, index) => entry === "" && !(includesBlank && index === 0))) {
-        throw new Error(
-            "Recognition dictionary contains an empty character. Parse dictionary text with parseRecognitionDictionary() to remove its trailing newline."
+            `Recognition charactersDictionary length ${supplied.length} is too small for model output classes ${numClasses}. Expected at least ${requiredLength}${includesBlank ? " including the CTC blank entry" : " without the CTC blank entry"}.`
         );
     }
     return includesBlank ? entries : ["", ...entries];
@@ -42,6 +37,7 @@ function prepareDictionary(
 /** Each run prepares its class mapping once, after the first model output establishes C. */
 export function createCtcDecoder(options: RecognitionDecodeOptions, charWhiteSet?: Set<string>) {
     let dictionary: readonly string[] | undefined;
+    let outputClasses: number | undefined;
     return (output: OrtTensor): { text: string; confidence: number } => {
         const { data: logits, dims } = output;
         if (
@@ -59,9 +55,10 @@ export function createCtcDecoder(options: RecognitionDecodeOptions, charWhiteSet
             );
         }
         const [, sequenceLength, numClasses] = dims;
-        dictionary ??= prepareDictionary(options, numClasses);
-        if (dictionary.length !== numClasses)
-            throw new Error("Recognition output class count changed within one run.");
+        if (outputClasses !== numClasses) {
+            dictionary = prepareDictionary(options, numClasses);
+            outputClasses = numClasses;
+        }
         let text = "";
         let scoreSum = 0;
         let scoreCount = 0;
@@ -80,7 +77,7 @@ export function createCtcDecoder(options: RecognitionDecodeOptions, charWhiteSet
             if (maxIndex === lastIndex) continue;
             lastIndex = maxIndex;
             if (maxIndex === 0) continue;
-            const char = dictionary[maxIndex];
+            const char = dictionary[maxIndex] || "";
             if (charWhiteSet && !charWhiteSet.has(char) && char !== " ") continue;
             text += char;
             scoreSum += maxScore;

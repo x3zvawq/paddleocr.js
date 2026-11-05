@@ -106,18 +106,24 @@ const text = ocr.processRecognition(results).text;
 console.log(text);
 ```
 
-`parseRecognitionDictionary()` preserves literal spaces and an optional leading CTC
-blank entry while removing the file's final newline. Recognition presets enable
+`parseRecognitionDictionary()` is an optional helper that preserves literal spaces
+and an optional leading CTC blank entry while removing the file's final newline.
+`recognition.charactersDictionary` still accepts your own `string[]`. Recognition presets enable
 `useSpaceChar`: the runtime appends a missing terminal space only when the model's
 class count requires exactly one more entry. Already prepared dictionaries are
-accepted unchanged; other length mismatches and empty character entries throw.
-Without a preset, set `recognition.useSpaceChar: true` for models that use this rule.
+accepted unchanged. Extra entries and empty strings retain their previous decoding
+behavior: unused entries are ignored, and empty strings produce no text. A dictionary
+that is still too short throws. Without a preset, set `recognition.useSpaceChar: true`
+for models that use this rule. The runtime never loads dictionary files automatically.
 
 All three pipeline services expose `destroy()`. Await pending work before calling it;
 repeated calls share the same cleanup. Factory-created models are released together,
 including textline orientation and nested OCR services. Failed initialization releases
 models already created. Services supplied to pipeline constructors remain caller-owned;
-release their ONNX sessions yourself. A destroyed pipeline cannot be reused.
+release their ONNX sessions yourself. OCR supports repeated `initialize()` calls,
+including after failure or `destroy()`; each call releases previously owned models
+before loading replacements. Initialization and destruction are serialized. Table and
+structure pipelines should be recreated after destruction.
 
 ## Input Pixels
 

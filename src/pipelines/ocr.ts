@@ -44,8 +44,8 @@ export interface FlattenedPaddleOcrResult {
  */
 export class PaddleOcrService {
     options: PaddleOptions;
-    private readonly resources = new SessionResources();
-    private state: "idle" | "initializing" | "ready" | "destroyed" = "idle";
+    private resources = new SessionResources();
+    private lifecycle: Promise<void> = Promise.resolve();
 
     detectionSession: OrtInferenceSession | null = null;
     detectionService: DetectionService | null = null;
@@ -93,13 +93,15 @@ export class PaddleOcrService {
     /**
      * Initialize the OCR service by loading models
      */
-    public async initialize(): Promise<void> {
-        if (this.state !== "idle") {
-            throw new Error(
-                `Cannot initialize OCR service in state ${this.state}. Create a new instance instead.`
-            );
-        }
-        this.state = "initializing";
+    public initialize(): Promise<void> {
+        return this.scheduleLifecycle(() => this.initializeModels());
+    }
+
+    private async initializeModels(): Promise<void> {
+        const previousResources = this.resources;
+        this.resources = new SessionResources();
+        this.clearServices();
+        await previousResources.release();
         try {
             const ort = this.options.ort;
             if (!ort) {
@@ -161,9 +163,7 @@ export class PaddleOcrService {
                     textlineOrientationOptions
                 );
             }
-            this.state = "ready";
         } catch (error) {
-            this.state = "destroyed";
             this.clearServices();
             await this.resources.rollback(error);
         }
@@ -173,7 +173,7 @@ export class PaddleOcrService {
      * Check if the service is initialized with models loaded
      */
     public isInitialized(): boolean {
-        return this.state === "ready";
+        return this.detectionSession !== null && this.recognitionSession !== null;
     }
 
     /**
@@ -254,7 +254,7 @@ export class PaddleOcrService {
         input: ImageInput,
         options?: RecognitionOptions
     ): Promise<RecognitionResult[]> {
-        if (!this.isInitialized()) {
+        if (!this.detectionService || !this.recognitionService) {
             throw new Error("PaddleOcrService is not initialized. Please call initialize() first.");
         }
         const detectionRuntimeOptions = this.resolveDetectionRuntimeOptions(options?.detection);
@@ -377,13 +377,18 @@ export class PaddleOcrService {
     }
 
     /** Call after pending recognition work has completed. */
-    public async destroy(): Promise<void> {
-        if (this.state === "initializing") {
-            throw new Error("Wait for OCR initialization to finish before destroying the service.");
-        }
-        this.state = "destroyed";
-        this.clearServices();
-        await this.resources.release();
+    public destroy(): Promise<void> {
+        return this.scheduleLifecycle(async () => {
+            this.clearServices();
+            await this.resources.release();
+        });
+    }
+
+    // Serialize model replacement and cleanup; a failed operation must not prevent a later retry.
+    private scheduleLifecycle(operation: () => Promise<void>): Promise<void> {
+        const pending = this.lifecycle.then(operation, operation);
+        this.lifecycle = pending;
+        return pending;
     }
 
     private clearServices(): void {
